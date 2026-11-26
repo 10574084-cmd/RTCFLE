@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#080b12">
+  <meta name="description" content="RTCFLE — reproductor SWF con efectos visuales de corrupción en tiempo real usando Ruffle.">
+  <title>RTCFLE — Real-Time Flash Corruptor</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #080b12;
+      --panel: #101722;
+      --panel-2: #0c121c;
+      --line: #263446;
+      --muted: #91a0b4;
+      --text: #edf5ff;
+      --cyan: #50f3dc;
+      --pink: #ff4e9b;
+      --yellow: #d8ff5a;
+      --strength: .7;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; color: var(--text);
+      background:
+        radial-gradient(ellipse at 10% 0%, rgba(35, 100, 112, .18), transparent 42%),
+        radial-gradient(ellipse at 95% 10%, rgba(135, 35, 85, .13), transparent 38%),
+        var(--bg);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button, input { font: inherit; }
+    .app { width: min(1320px, calc(100% - 32px)); margin: 0 auto; padding: 30px 0 36px; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 24px; }
+    .brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
+    .brand-mark {
+      width: 46px; height: 46px; display: grid; place-items: center; flex: 0 0 auto;
+      border: 1px solid rgba(80,243,220,.5); border-radius: 13px; color: var(--cyan);
+      background: linear-gradient(145deg, rgba(80,243,220,.16), rgba(255,78,155,.11));
+      box-shadow: 0 0 26px rgba(80,243,220,.1), inset 0 0 18px rgba(80,243,220,.06);
+      font-weight: 900; letter-spacing: -2px; font-size: 19px;
+    }
+    h1 { margin: 0; font-size: clamp(20px, 3vw, 28px); letter-spacing: .06em; }
+    .subtitle { margin: 4px 0 0; color: var(--muted); font-size: 12px; letter-spacing: .16em; text-transform: uppercase; }
+    .top-status { display: flex; align-items: center; gap: 9px; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .12em; }
+    .led { width: 8px; height: 8px; border-radius: 50%; background: #64748b; box-shadow: 0 0 10px currentColor; }
+    .led.ready { background: var(--cyan); color: var(--cyan); }
+    .layout { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(290px, .85fr); gap: 18px; align-items: start; }
+    .panel {
+      background: linear-gradient(160deg, rgba(18,27,40,.97), rgba(10,16,25,.98));
+      border: 1px solid var(--line); border-radius: 17px; overflow: hidden;
+      box-shadow: 0 18px 60px rgba(0,0,0,.24);
+    }
+    .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 15px 17px; border-bottom: 1px solid var(--line); }
+    .panel-title { color: #c5d3e5; font-size: 11px; font-weight: 800; letter-spacing: .17em; text-transform: uppercase; }
+    .tiny { color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .stage-wrap { padding: 15px; }
+    .stage {
+      --hue: 0deg; --contrast: 1; --saturate: 1;
+      position: relative; display: grid; place-items: center; width: 100%; aspect-ratio: 4 / 3;
+      min-height: 280px; overflow: hidden; isolation: isolate; border: 1px solid #263849;
+      border-radius: 11px; background:
+        radial-gradient(ellipse at center, rgba(26,45,58,.35), transparent 64%),
+        repeating-linear-gradient(0deg, rgba(255,255,255,.018) 0 1px, transparent 1px 3px),
+        #03060a;
+    }
+    .stage::before {
+      content: ""; position: absolute; inset: 0; z-index: 3; pointer-events: none;
+      opacity: var(--scan-opacity, .16);
+      background: repeating-linear-gradient(to bottom, transparent 0 3px, rgba(0,0,0,.72) 4px 5px);
+      mix-blend-mode: multiply;
+    }
+    .stage::after {
+      content: ""; position: absolute; inset: 0; z-index: 4; pointer-events: none; opacity: var(--vignette, .45);
+      background: radial-gradient(ellipse at center, transparent 48%, rgba(0,0,0,.65) 100%);
+    }
+    #ruffleMount { width: 100%; height: 100%; display: grid; place-items: center; position: relative; z-index: 1; }
+    #ruffleMount ruffle-player { width: 100% !important; height: 100% !important; max-width: 100%; max-height: 100%; }
+    #ruffleMount .ruffle-host {
+      width: 100%; height: 100%; display: grid; place-items: center;
+      filter: hue-rotate(var(--hue)) contrast(var(--contrast)) saturate(var(--saturate));
+      transform: translate(var(--shift-x, 0px), var(--shift-y, 0px)) skewX(var(--skew, 0deg)) scale(var(--scale, 1));
+      transform-origin: center;
+    }
+    #noiseCanvas { position: absolute; z-index: 2; inset: 0; width: 100%; height: 100%; pointer-events: none; opacity: var(--noise-opacity, .12); mix-blend-mode: screen; image-rendering: pixelated; }
+    .glitch-bars { position: absolute; z-index: 2; inset: 0; pointer-events: none; opacity: var(--bars-opacity, .0); mix-blend-mode: screen;
+      background: linear-gradient(transparent 0 12%, rgba(255,70,150,.48) 12% 13%, transparent 13% 45%, rgba(70,240,220,.32) 45% 47%, transparent 47% 81%, rgba(220,255,80,.28) 81% 82%, transparent 82%);
+      transform: translateX(var(--bars-x, 0px)); }
+    .empty-state { position: absolute; z-index: 5; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; }
+    .empty-icon { width: 58px; height: 58px; display: grid; place-items: center; border: 1px solid rgba(80,243,220,.35); border-radius: 16px; color: var(--cyan); font-size: 25px; margin-bottom: 17px; background: rgba(80,243,220,.06); }
+    .empty-state h2 { margin: 0 0 8px; font-size: 17px; }
+    .empty-state p { max-width: 360px; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+    .stage-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 11px 3px 0; color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .transport { display: flex; flex-wrap: wrap; gap: 9px; padding: 0 15px 15px; }
+    .btn {
+      display: inline-flex; justify-content: center; align-items: center; gap: 8px; min-height: 38px;
+      padding: 0 14px; border: 1px solid #34465a; border-radius: 9px; color: var(--text);
+      background: #172333; cursor: pointer; font-size: 12px; font-weight: 700; transition: .16s ease;
+    }
+    .btn:hover { border-color: var(--cyan); transform: translateY(-1px); }
+    .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+    .btn.primary { color: #061014; background: var(--cyan); border-color: var(--cyan); }
+    .btn.primary:hover { background: #8affed; }
+    .btn.pink { border-color: rgba(255,78,155,.55); color: #ff8cba; background: rgba(255,78,155,.08); }
+    .btn.active { border-color: var(--yellow); color: var(--yellow); background: rgba(216,255,90,.08); }
+    .controls { padding: 15px 16px 17px; }
+    .control-group + .control-group { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); }
+    .control-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; }
+    .control-heading strong { font-size: 12px; letter-spacing: .08em; }
+    .value { color: var(--cyan); font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .range-row { display: grid; grid-template-columns: 1fr 42px; gap: 12px; align-items: center; margin: 13px 0; }
+    .range-label { display: block; color: #c1ccda; font-size: 11px; margin-bottom: 8px; }
+    input[type="range"] { width: 100%; accent-color: var(--cyan); cursor: pointer; }
+    .range-value { color: var(--muted); text-align: right; font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .toggle {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px;
+      border: 1px solid #29394b; border-radius: 9px; background: rgba(255,255,255,.02);
+      color: #c5d2e1; font-size: 11px; cursor: pointer; user-select: none;
+    }
+    .toggle input { accent-color: var(--cyan); width: 15px; height: 15px; }
+    .toggle:has(input:checked) { border-color: rgba(80,243,220,.52); color: var(--cyan); background: rgba(80,243,220,.055); }
+    .actions-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .actions-grid .btn { width: 100%; }
+    .upload-zone { margin: 0 15px 15px; padding: 16px; border: 1px dashed #3a5368; border-radius: 11px; background: rgba(80,243,220,.035); text-align: center; }
+    .upload-zone.drag { border-color: var(--cyan); background: rgba(80,243,220,.1); }
+    .upload-zone p { margin: 0 0 10px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .file-name { display: block; min-height: 16px; margin-top: 9px; color: var(--cyan); font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
+    #fileInput { display: none; }
+    .notice { margin-top: 18px; padding: 13px 15px; border: 1px solid #293849; border-radius: 11px; background: rgba(12,18,28,.72); color: var(--muted); font-size: 11px; line-height: 1.65; }
+    .notice b { color: #dce8f6; }
+    footer { display: flex; justify-content: space-between; gap: 10px; margin-top: 22px; color: #66778c; font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    @keyframes jitter {
+      0%, 100% { transform: translate(0,0) skewX(0); }
+      20% { transform: translate(2px,-1px) skewX(.5deg); }
+      40% { transform: translate(-2px,1px) skewX(-.7deg); }
+      60% { transform: translate(1px,2px) skewX(.3deg); }
+      80% { transform: translate(-1px,-1px) skewX(-.3deg); }
+    }
+    .jitter #ruffleMount .ruffle-host { animation: jitter .16s steps(2,end) infinite; }
+    @media (max-width: 850px) {
+      .layout { grid-template-columns: 1fr; }
+      .top-status { display: none; }
+    }
+    @media (max-width: 520px) {
+      .app { width: min(100% - 20px, 1320px); padding-top: 18px; }
+      header { margin-bottom: 16px; }
+      .stage-wrap { padding: 9px; }
+      .stage { min-height: 230px; }
+      .transport { padding: 0 9px 10px; }
+      .btn { flex: 1; }
+      .controls { padding: 13px; }
+      footer { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header>
+      <div class="brand">
+        <div class="brand-mark">R!</div>
+        <div>
+          <h1>RTCFLE</h1>
+          <p class="subtitle">Real-Time Flash Corruptor // Ruffle build</p>
+        </div>
+      </div>
+      <div class="top-status"><span class="led" id="statusLed"></span><span id="engineStatus">RUFFLE: CONNECTING</span></div>
+    </header>
+
+    <div class="layout">
+      <section class="panel">
+        <div class="panel-head">
+          <span class="panel-title">01 // Flash output</span>
+          <span class="tiny" id="fileState">NO SWF LOADED</span>
+        </div>
+        <div class="stage-wrap">
+          <div class="stage" id="stage">
+            <div id="ruffleMount"></div>
+            <canvas id="noiseCanvas" aria-hidden="true"></canvas>
+            <div class="glitch-bars" id="glitchBars"></div>
+            <div class="empty-state" id="emptyState">
+              <div class="empty-icon">▧</div>
+              <h2>Load a SWF to begin</h2>
+              <p>Drop a Flash file here or use the loader below. Ruffle runs it inside this page.</p>
+            </div>
+          </div>
+          <div class="stage-footer">
+            <span id="stageInfo">OUTPUT: WAITING FOR INPUT</span>
+            <span>VISUAL PIPELINE: <span id="pipelineState">IDLE</span></span>
+          </div>
+        </div>
+        <div class="transport">
+          <button class="btn primary" id="loadButton">＋ Load SWF</button>
+          <button class="btn" id="reloadButton" disabled>↻ Reload</button>
+          <button class="btn pink" id="stopButton" disabled>■ Unload</button>
+          <input type="file" id="fileInput" accept=".swf,application/x-shockwave-flash">
+        </div>
+        <div class="upload-zone" id="dropZone">
+          <p>Drag &amp; drop a <b>.SWF</b> file here</p>
+          <button class="btn" id="browseButton">Browse files</button>
+          <span class="file-name" id="fileName">No file selected</span>
+        </div>
+      </section>
+
+      <aside class="panel">
+        <div class="panel-head">
+          <span class="panel-title">02 // Corruption controls</span>
+          <span class="tiny">LIVE FX</span>
+        </div>
+        <div class="controls">
+          <div class="control-group">
+            <div class="control-heading"><strong>MASTER INTENSITY</strong><span class="value" id="intensityValue">70%</span></div>
+            <input type="range" id="intensity" min="0" max="100" value="70" aria-label="Master intensity">
+          </div>
+
+          <div class="control-group">
+            <div class="control-heading"><strong>COLOR / SIGNAL</strong><span class="tiny">CHANNEL A</span></div>
+            <div class="range-row">
+              <div><label class="range-label" for="hue">Hue shift</label><input type="range" id="hue" min="-180" max="180" value="0"></div>
+              <span class="range-value" id="hueValue">0°</span>
+            </div>
+            <div class="range-row">
+              <div><label class="range-label" for="contrast">Contrast</label><input type="range" id="contrast" min="50" max="250" value="120"></div>
+              <span class="range-value" id="contrastValue">120%</span>
+            </div>
+            <div class="range-row">
+              <div><label class="range-label" for="saturation">Saturation</label><input type="range" id="saturation" min="0" max="300" value="120"></div>
+              <span class="range-value" id="saturationValue">120%</span>
+            </div>
+          </div>
+
+          <div class="control-group">
+            <div class="control-heading"><strong>DISPLAY ARTIFACTS</strong><span class="tiny">TOGGLES</span></div>
+            <div class="toggles">
+              <label class="toggle">CRT scanlines <input type="checkbox" id="scanlines" checked></label>
+              <label class="toggle">Signal noise <input type="checkbox" id="noise" checked></label>
+              <label class="toggle">Screen jitter <input type="checkbox" id="jitter"></label>
+              <label class="toggle">Glitch bars <input type="checkbox" id="bars"></label>
+            </div>
+          </div>
+
+          <div class="control-group">
+            <div class="control-heading"><strong>RANDOMIZER</strong><span class="tiny">RTC MODE</span></div>
+            <div class="actions-grid">
+              <button class="btn pink" id="randomButton">⚡ Randomize</button>
+              <button class="btn" id="autoButton">▷ Auto: OFF</button>
+              <button class="btn" id="resetButton" style="grid-column:1/-1">Reset effects</button>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <div class="notice">
+      <b>Local / visual-only mode:</b> RTCFLE does not rewrite or damage your SWF. Ruffle plays the selected file in your browser and the corruption effects are applied to the displayed output. The SWF is not uploaded. An internet connection is needed to load the Ruffle player from its official CDN.
+    </div>
+    <footer>
+      <span>RTCFLE // EXPERIMENTAL BUILD 0.1</span>
+      <span>POWERED BY <a href="https://ruffle.rs/" target="_blank" rel="noreferrer" style="color:var(--cyan)">RUFFLE</a></span>
+    </footer>
+  </main>
+
+  <script>
+    (function () {
+      "use strict";
+
+      const $ = (id) => document.getElementById(id);
+      const stage = $("stage");
+      const mount = $("ruffleMount");
+      const input = $("fileInput");
+      const noiseCanvas = $("noiseCanvas");
+      const noiseCtx = noiseCanvas.getContext("2d", { alpha: true });
+      const emptyState = $("emptyState");
+      let player = null;
+      let currentObjectUrl = null;
+      let currentFile = null;
+      let autoTimer = null;
+      let noiseFrame = 0;
+      let lastNoiseDraw = 0;
+      let ruffleReady = false;
+
+      window.RufflePlayer = window.RufflePlayer || {};
+      window.RufflePlayer.config = Object.assign({}, window.RufflePlayer.config || {}, {
+        autoplay: "on",
+        splashScreen: false,
+        backgroundColor: "#03060a",
+        allowScriptAccess: false,
+        upgradeToHttps: true
+      });
+
+      const rufflePromise = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = "https://unpkg.com/@ruffle-rs/ruffle";
+        script.async = true;
+        script.onload = () => {
+          ruffleReady = true;
+          $("engineStatus").textContent = "RUFFLE: READY";
+          $("statusLed").classList.add("ready");
+          resolve();
+        };
+        script.onerror = () => {
+          $("engineStatus").textContent = "RUFFLE: CDN ERROR";
+          $("stageInfo").textContent = "ERROR: COULD NOT LOAD RUFFLE";
+          reject(new Error("Could not load Ruffle from the official CDN."));
+        };
+        document.head.appendChild(script);
+      });
+
+      function setStatus(message) {
+        $("stageInfo").textContent = message;
+        $("pipelineState").textContent = message.indexOf("ERROR") === 0 ? "ERROR" : (currentFile ? "ACTIVE" : "IDLE");
+      }
+
+      async function loadFile(file) {
+        if (!file) return;
+        if (!file.name.toLowerCase().endsWith(".swf")) {
+          setStatus("ERROR: PLEASE SELECT A .SWF FILE");
+          return;
+        }
+        if (file.size > 150 * 1024 * 1024) {
+          setStatus("ERROR: FILE IS OVER 150 MB");
+          return;
+        }
+
+        $("fileName").textContent = file.name + "  ·  " + (file.size / 1024 / 1024).toFixed(2) + " MB";
+        setStatus("LOADING SWF...");
+        try {
+          await rufflePromise;
+          if (!player) {
+            const api = window.RufflePlayer.newest();
+            player = api.createPlayer();
+            player.id = "rufflePlayer";
+            player.className = "ruffle-player";
+            player.style.width = "100%";
+            player.style.height = "100%";
+            const host = document.createElement("div");
+            host.className = "ruffle-host";
+            host.appendChild(player);
+            mount.replaceChildren(host);
+          }
+
+          if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
+          currentObjectUrl = URL.createObjectURL(file);
+          currentFile = file;
+          emptyState.style.display = "none";
+          $("fileState").textContent = "SWF LOADED";
+          $("reloadButton").disabled = false;
+          $("stopButton").disabled = false;
+          await player.ruffle().load(currentObjectUrl);
+          setStatus("PLAYING: " + file.name.toUpperCase());
+          applyEffects();
+        } catch (error) {
+          console.error(error);
+          setStatus("ERROR: " + (error && error.message ? error.message.toUpperCase() : "SWF LOAD FAILED"));
+        }
+      }
+
+      function unloadFile() {
+        if (player) {
+          try { player.ruffle().destroy(); } catch (_) {}
+          player.remove();
+          player = null;
+        }
+        mount.replaceChildren();
+        if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
+        currentObjectUrl = null;
+        currentFile = null;
+        emptyState.style.display = "flex";
+        $("fileState").textContent = "NO SWF LOADED";
+        $("fileName").textContent = "No file selected";
+        $("reloadButton").disabled = true;
+        $("stopButton").disabled = true;
+        setStatus("OUTPUT: WAITING FOR INPUT");
+        applyEffects();
+      }
+
+      function applyEffects() {
+        const intensity = Number($("intensity").value) / 100;
+        const hue = Number($("hue").value);
+        const contrast = 1 + ((Number($("contrast").value) / 100) - 1) * intensity;
+        const saturation = 1 + ((Number($("saturation").value) / 100) - 1) * intensity;
+        stage.style.setProperty("--hue", (hue * intensity) + "deg");
+        stage.style.setProperty("--contrast", String(contrast));
+        stage.style.setProperty("--saturate", String(saturation));
+        stage.style.setProperty("--scan-opacity", $("scanlines").checked ? String(.04 + intensity * .28) : "0");
+        stage.style.setProperty("--noise-opacity", $("noise").checked ? String(intensity * .28) : "0");
+        stage.style.setProperty("--bars-opacity", $("bars").checked ? String(.08 + intensity * .55) : "0");
+        stage.classList.toggle("jitter", $("jitter").checked);
+        $("intensityValue").textContent = Math.round(intensity * 100) + "%";
+        $("hueValue").textContent = hue + "°";
+        $("contrastValue").textContent = $("contrast").value + "%";
+        $("saturationValue").textContent = $("saturation").value + "%";
+        $("pipelineState").textContent = currentFile ? "ACTIVE" : "IDLE";
+      }
+
+      function randomize() {
+        $("intensity").value = String(30 + Math.floor(Math.random() * 71));
+        $("hue").value = String(-180 + Math.floor(Math.random() * 361));
+        $("contrast").value = String(70 + Math.floor(Math.random() * 181));
+        $("saturation").value = String(Math.floor(Math.random() * 301));
+        $("scanlines").checked = Math.random() > .18;
+        $("noise").checked = Math.random() > .12;
+        $("jitter").checked = Math.random() > .48;
+        $("bars").checked = Math.random() > .4;
+        applyEffects();
+        $("glitchBars").style.setProperty("--bars-x", (Math.random() * 24 - 12) + "px");
+      }
+
+      function resetEffects() {
+        stopAuto();
+        $("intensity").value = "0";
+        $("hue").value = "0";
+        $("contrast").value = "100";
+        $("saturation").value = "100";
+        $("scanlines").checked = false;
+        $("noise").checked = false;
+        $("jitter").checked = false;
+        $("bars").checked = false;
+        applyEffects();
+      }
+
+      function stopAuto() {
+        if (autoTimer) clearInterval(autoTimer);
+        autoTimer = null;
+        $("autoButton").textContent = "▷ Auto: OFF";
+        $("autoButton").classList.remove("active");
+      }
+
+      function toggleAuto() {
+        if (autoTimer) {
+          stopAuto();
+        } else {
+          randomize();
+          autoTimer = setInterval(randomize, 650);
+          $("autoButton").textContent = "Ⅱ Auto: ON";
+          $("autoButton").classList.add("active");
+        }
+      }
+
+      function drawNoise(timestamp) {
+        noiseFrame = requestAnimationFrame(drawNoise);
+        if (timestamp - lastNoiseDraw < 90) return;
+        lastNoiseDraw = timestamp;
+        const width = 160;
+        const height = 90;
+        if (noiseCanvas.width !== width || noiseCanvas.height !== height) {
+          noiseCanvas.width = width;
+          noiseCanvas.height = height;
+        }
+        const image = noiseCtx.createImageData(width, height);
+        const intensity = Number($("intensity").value) / 100;
+        for (let i = 0; i < image.data.length; i += 4) {
+          const value = Math.random() * 255;
+          image.data[i] = value;
+          image.data[i + 1] = value;
+          image.data[i + 2] = value;
+          image.data[i + 3] = Math.floor(Math.random() * 90 * intensity);
+        }
+        noiseCtx.putImageData(image, 0, 0);
+      }
+
+      $("loadButton").addEventListener("click", () => input.click());
+      $("browseButton").addEventListener("click", () => input.click());
+      input.addEventListener("change", (event) => {
+        const file = event.target.files && event.target.files[0];
+        if (file) loadFile(file);
+        input.value = "";
+      });
+      $("reloadButton").addEventListener("click", () => { if (currentFile) loadFile(currentFile); });
+      $("stopButton").addEventListener("click", unloadFile);
+      $("randomButton").addEventListener("click", randomize);
+      $("autoButton").addEventListener("click", toggleAuto);
+      $("resetButton").addEventListener("click", resetEffects);
+
+      ["intensity", "hue", "contrast", "saturation", "scanlines", "noise", "jitter", "bars"].forEach((id) => {
+        $(id).addEventListener("input", applyEffects);
+        $(id).addEventListener("change", applyEffects);
+      });
+
+      const dropZone = $("dropZone");
+      ["dragenter", "dragover"].forEach((name) => dropZone.addEventListener(name, (event) => {
+        event.preventDefault();
+        dropZone.classList.add("drag");
+      }));
+      ["dragleave", "drop"].forEach((name) => dropZone.addEventListener(name, (event) => {
+        event.preventDefault();
+        dropZone.classList.remove("drag");
+      }));
+      dropZone.addEventListener("drop", (event) => {
+        const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
+        if (file) loadFile(file);
+      });
+      stage.addEventListener("dragover", (event) => event.preventDefault());
+      stage.addEventListener("drop", (event) => {
+        event.preventDefault();
+        const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
+        if (file) loadFile(file);
+      });
+
+      applyEffects();
+      noiseFrame = requestAnimationFrame(drawNoise);
+      window.addEventListener("beforeunload", () => {
+        if (noiseFrame) cancelAnimationFrame(noiseFrame);
+        stopAuto();
+        if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
+      });
+    })();
+  </script>
+</body>
+</html>
