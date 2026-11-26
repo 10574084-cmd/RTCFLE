@@ -52,6 +52,35 @@ patch("core/src/tessellation_cache.rs",
         "    }"
     ]);
 
+
+patch("core/src/display_object/graphic.rs",
+    ["use gc_arena::lock::Lock;"],
+    ["use gc_arena::lock::{Lock, RefLock};"]);
+
+patch("core/src/display_object/graphic.rs",
+    ["            shape_bounds: swf_shape.shape_bounds,", "            edge_bounds: swf_shape.edge_bounds,", "            shape: swf_shape,"],
+    ["            shape: RefLock::new(swf_shape),"]);
+
+patch("core/src/display_object/graphic.rs",
+    ["            shape_bounds: Default::default(),", "            edge_bounds: Default::default(),", "            shape: swf::Shape {"],
+    ["            shape: RefLock::new(swf::Shape {"]);
+
+patch("core/src/display_object/graphic.rs",
+    ["                shape: Vec::new(),", "            },", "            movie: *context.root_swf,"],
+    ["                shape: Vec::new(),", "            }),", "            movie: *context.root_swf,"]);
+
+patch("core/src/display_object/graphic.rs",
+    ["        let new_handle = context.renderer.register_shape_with_scale(", "            (&shared.shape).into(),"],
+    ["        let shape = shared.shape.borrow();", "        let new_handle = context.renderer.register_shape_with_scale(", "            (&*shape).into(),"]);
+
+patch("core/src/display_object/graphic.rs",
+    ["        } else if include_strokes {", "            self.0.shared.get().shape_bounds", "        } else {", "            self.0.shared.get().edge_bounds", "        }"],
+    ["        } else {", "            let shared = self.0.shared.get();", "            let shape = shared.shape.borrow();", "            if include_strokes {", "                shape.shape_bounds", "            } else {", "                shape.edge_bounds", "            }", "        }"]);
+
+patch("core/src/display_object/graphic.rs",
+    ["    #[collect(require_static)]", "    shape: swf::Shape,", "", "    #[collect(require_static)]", "    shape_bounds: Rectangle<Twips>,", "", "    #[collect(require_static)]", "    edge_bounds: Rectangle<Twips>,"],
+    ["    #[collect(require_static)]", "    shape: RefLock<swf::Shape>,"]);
+
 patch("core/src/display_object/graphic.rs",
     [
         "    pub fn drawing_mut(&self) -> RefMut<'_, Drawing> {",
@@ -73,12 +102,12 @@ patch("core/src/display_object/graphic.rs",
         "        seed: &mut u32,",
         "        intensity: u8,",
         "    ) -> u32 {",
-        "        let mut shared = Gc::write(mc, self.0.shared.get());",
-        "        let changed = crate::vector_mutation::mutate_shape(&mut shared.shape, seed, intensity);",
+        "        let changed = {",
+        "            let mut shape = unlock!(Gc::write(mc, self.0.shared.get()), GraphicShared, shape).borrow_mut();",
+        "            crate::vector_mutation::mutate_shape(&mut shape, seed, intensity)",
+        "        };",
         "        if changed > 0 {",
-        "            shared.shape_bounds = shared.shape.shape_bounds;",
-        "            shared.edge_bounds = shared.shape.edge_bounds;",
-        "            shared.scaled_handle.borrow_mut().clear();",
+        "            self.0.shared.get().scaled_handle.borrow_mut().clear();",
         "        }",
         "        changed",
         "    }",
@@ -87,6 +116,39 @@ patch("core/src/display_object/graphic.rs",
         "        self.invalidate_cached_bitmap();",
         "    }"
     ]);
+
+
+patch("core/src/display_object/morph_shape.rs",
+    ["use gc_arena::lock::Lock;"],
+    ["use gc_arena::lock::{Lock, RefLock};"]);
+
+patch("core/src/display_object/morph_shape.rs",
+    ["            start: swf_tag.start.clone(),", "            end: swf_tag.end.clone(),"],
+    ["            start: RefLock::new(swf_tag.start.clone()),", "            end: RefLock::new(swf_tag.end.clone()),"]);
+
+patch("core/src/display_object/morph_shape.rs",
+    ["    #[collect(require_static)]", "    start: swf::MorphShape,", "", "    #[collect(require_static)]", "    end: swf::MorphShape,"],
+    ["    #[collect(require_static)]", "    start: RefLock<swf::MorphShape>,", "", "    #[collect(require_static)]", "    end: RefLock<swf::MorphShape>,"]);
+
+patch("core/src/display_object/morph_shape.rs",
+    ["            BoundsMode::Script => shared.start.shape_bounds,", "", "            // For getRect() or hitTestObject(), use the `edge_bounds` that were declared to be the", "            // bounds of the start shape", "            BoundsMode::ScriptWithoutStrokes => shared.start.edge_bounds,"],
+    ["            BoundsMode::Script => shared.start.borrow().shape_bounds,", "", "            // For getRect() or hitTestObject(), use the `edge_bounds` that were declared to be the", "            // bounds of the start shape", "            BoundsMode::ScriptWithoutStrokes => shared.start.borrow().edge_bounds,"]);
+
+patch("core/src/display_object/morph_shape.rs",
+    ["        use swf::{FillStyle, LineStyle, ShapeRecord, ShapeStyles};", "        // Start shape is ratio 65535, end shape is ratio 0."],
+    ["        use swf::{FillStyle, LineStyle, ShapeRecord, ShapeStyles};", "        let start_morph = self.start.borrow();", "        let end_morph = self.end.borrow();", "        // Start shape is ratio 65535, end shape is ratio 0."]);
+
+patch("core/src/display_object/morph_shape.rs",
+    ["        let fill_styles: Vec<FillStyle> = self", "            .start", "            .fill_styles", "            .iter()", "            .zip(self.end.fill_styles.iter())"],
+    ["        let fill_styles: Vec<FillStyle> = start_morph", "            .fill_styles", "            .iter()", "            .zip(end_morph.fill_styles.iter())"]);
+
+patch("core/src/display_object/morph_shape.rs",
+    ["        let line_styles: Vec<LineStyle> = self", "            .start", "            .line_styles", "            .iter()", "            .zip(self.end.line_styles.iter())"],
+    ["        let line_styles: Vec<LineStyle> = start_morph", "            .line_styles", "            .iter()", "            .zip(end_morph.line_styles.iter())"]);
+
+patch("core/src/display_object/morph_shape.rs",
+    ["        let mut shape = Vec::with_capacity(self.start.shape.len());", "        let mut start_iter = self.start.shape.iter();", "        let mut end_iter = self.end.shape.iter();"],
+    ["        let mut shape = Vec::with_capacity(start_morph.shape.len());", "        let mut start_iter = start_morph.shape.iter();", "        let mut end_iter = end_morph.shape.iter();"]);
 
 patch("core/src/display_object/morph_shape.rs",
     [
@@ -109,26 +171,22 @@ patch("core/src/display_object/morph_shape.rs",
         "        seed: &mut u32,",
         "        intensity: u8,",
         "    ) -> u32 {",
-        "        let mut shared = Gc::write(mc, self.0.shared.get());",
-        "        let mut changed =",
-        "            crate::vector_mutation::mutate_morph_shape(&mut shared.start, seed, intensity);",
-        "        changed += crate::vector_mutation::mutate_morph_shape(&mut shared.end, seed, intensity);",
+        "        let mut changed = {",
+        "            let mut start = unlock!(Gc::write(mc, self.0.shared.get()), MorphShapeShared, start).borrow_mut();",
+        "            crate::vector_mutation::mutate_morph_shape(&mut start, seed, intensity)",
+        "        };",
+        "        changed += {",
+        "            let mut end = unlock!(Gc::write(mc, self.0.shared.get()), MorphShapeShared, end).borrow_mut();",
+        "            crate::vector_mutation::mutate_morph_shape(&mut end, seed, intensity)",
+        "        };",
         "        if changed > 0 {",
-        "            shared.frames.borrow_mut().clear();",
+        "            self.0.shared.get().frames.borrow_mut().clear();",
         "        }",
         "        changed",
         "    }",
         "",
         "    pub(crate) fn invalidate_vector_mutation_cache(self) {",
-        "        if self.invalidate_cached_bitmap() {",
-        "            let mut parent = self.parent();",
-        "            while let Some(parent_object) = parent {",
-        "                if !parent_object.invalidate_cached_bitmap() {",
-        "                    break;",
-        "                }",
-        "                parent = parent_object.parent();",
-        "            }",
-        "        }",
+        "        self.invalidate_cached_bitmap();",
         "    }"
     ]);
 
