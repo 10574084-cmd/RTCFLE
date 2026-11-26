@@ -10,6 +10,7 @@ RTCFLE is a standalone-style SWF asset corruption tool for the browser, powered 
 - Vector corruption level from 1 to 1000. The upper range applies very strong geometric and style mutations.
 - Keep bitmap corruption on its own independent strength control.
 - Choose vector-only, image-only, or both asset targets.
+- **Live corruption mode:** continuously generate new variants from the original SWF and reload them in Ruffle every 2.5 seconds. Stop the loop with the same button. Each reload restarts the movie timeline.
 - Choose a corruption algorithm and export the modified SWF as a separate file.
 - Keep the source file unchanged; mutation happens on a temporary in-memory copy.
 
