@@ -84,6 +84,7 @@
     .btn.primary { color: #061014; background: var(--cyan); border-color: var(--cyan); }
     .btn.primary:hover { background: #8affed; }
     .btn.pink { border-color: rgba(255,78,155,.55); color: #ff8cba; background: rgba(255,78,155,.08); }
+    .btn.live-active { border-color: #ff4e9b; color: #130610; background: #ff4e9b; box-shadow: 0 0 24px rgba(255,78,155,.24); }
     .btn.active { border-color: var(--yellow); color: var(--yellow); background: rgba(216,255,90,.08); }
     .controls { padding: 15px 16px 17px; }
     .control-group + .control-group { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); }
@@ -209,6 +210,8 @@
                 <option value="posterize">Color posterization</option>
               </select>
             </div>
+            <button class="btn pink" id="liveCorruptButton" style="width:100%;margin-top:15px" disabled>⚡ Corrupción en tiempo real · OFF</button>
+            <p id="liveCorruptStatus" class="tiny" style="margin:8px 0 0;line-height:1.6">Carga un SWF para activar el modo en tiempo real.</p>
             <p id="assetReport" class="tiny" style="margin:11px 0 0;line-height:1.6">Asset mutator: armed · source file stays untouched</p>
           </div>
 
@@ -217,7 +220,7 @@
     </div>
 
     <div class="notice">
-      <b>Local / visual-only mode:</b> RTCFLE does not rewrite or damage your SWF. Ruffle plays the selected file in your browser and the corruption effects are applied to the displayed output. The SWF is not uploaded. An internet connection is needed to load the Ruffle player from its official CDN.
+      <b>Local processing:</b> RTCFLE edits a temporary copy of the selected SWF in your browser; the original is not uploaded or overwritten. Live corruption generates a new variant from the original and reloads it in Ruffle every 2.5 seconds. Each reload restarts the movie timeline. An internet connection is required to load Ruffle from unpkg.
     </div>
     <footer>
       <span>RTCFLE // EXPERIMENTAL BUILD 0.1</span>
@@ -240,6 +243,12 @@
       let currentMutatedBlob = null;
       let currentExportName = "corrupted.swf";
       let ruffleReady = false;
+      let liveCorruptionTimer = null;
+      let liveCorruptionActive = false;
+      let liveCorruptionBusy = false;
+      let liveCorruptionRunId = 0;
+      let liveCorruptionPass = 0;
+      const LIVE_CORRUPTION_INTERVAL_MS = 2500;
 
       window.RufflePlayer = window.RufflePlayer || {};
       window.RufflePlayer.config = Object.assign({}, window.RufflePlayer.config || {}, {
@@ -821,8 +830,93 @@
         }
       }
 
+      function stopLiveCorruption(message) {
+        liveCorruptionActive = false;
+        liveCorruptionRunId++;
+        if (liveCorruptionTimer) clearInterval(liveCorruptionTimer);
+        liveCorruptionTimer = null;
+        const button = $("liveCorruptButton");
+        button.textContent = "⚡ Corrupción en tiempo real · OFF";
+        button.classList.remove("live-active");
+        if (message) $("liveCorruptStatus").textContent = message;
+      }
+
+      async function runLiveCorruption(runId) {
+        if (!liveCorruptionActive || runId !== liveCorruptionRunId || liveCorruptionBusy) return;
+        const sourceFile = currentFile;
+        if (!sourceFile || !player) {
+          stopLiveCorruption("Carga un SWF antes de iniciar la corrupción en tiempo real.");
+          return;
+        }
+        liveCorruptionBusy = true;
+        $("liveCorruptStatus").textContent = "CREATING MUTATION " + (liveCorruptionPass + 1) + "…";
+        try {
+          const result = await corruptSwfAssets(sourceFile);
+          if (!liveCorruptionActive || runId !== liveCorruptionRunId || currentFile !== sourceFile) return;
+          if (result.blob === sourceFile) {
+            stopLiveCorruption("No se encontraron recursos compatibles para mutar. Prueba otro SWF o cambia el objetivo.");
+            setStatus("LIVE CORRUPTION: NO SUPPORTED ASSETS");
+            return;
+          }
+
+          const bytes = await result.blob.arrayBuffer();
+          if (!liveCorruptionActive || runId !== liveCorruptionRunId || currentFile !== sourceFile) return;
+
+          await player.ruffle().load({
+            data: bytes,
+            swfFileName: sourceFile.name,
+            autoplay: "on"
+          });
+
+          if (!liveCorruptionActive || runId !== liveCorruptionRunId || currentFile !== sourceFile) return;
+          currentMutatedBlob = result.blob;
+          currentExportName = sourceFile.name.replace(/\.swf$/i, "") + ".rtcfle-live-corrupted.swf";
+          $("exportButton").disabled = false;
+          liveCorruptionPass++;
+          const vectorLevel = $("vectorStrength").value;
+          $("liveCorruptStatus").textContent = "LIVE · PASS " + liveCorruptionPass + " · VECTOR LEVEL " + vectorLevel + "/1000 · UPDATED";
+          $("assetReport").textContent = "Live mutation " + liveCorruptionPass + " · " + result.stats.vectorShapes + " shapes · " + result.stats.vectorEdges + " edges · " + result.stats.vectorMoves + " moved points · " + result.stats.vectorColors + " colors · " + result.stats.bitmapImages + " images";
+          setStatus("LIVE CORRUPTION: PASS #" + liveCorruptionPass);
+        } catch (error) {
+          console.error("RTCFLE live corruption error:", error);
+          if (liveCorruptionActive && runId === liveCorruptionRunId) {
+            stopLiveCorruption("Live mode stopped: " + (error && error.message ? error.message : "Ruffle load failed"));
+            setStatus("ERROR: LIVE CORRUPTION FAILED");
+          }
+        } finally {
+          liveCorruptionBusy = false;
+        }
+      }
+
+      function toggleLiveCorruption() {
+        if (liveCorruptionActive) {
+          stopLiveCorruption("Live corruption paused. The latest generated SWF remains loaded.");
+          setStatus("LIVE CORRUPTION: PAUSED");
+          return;
+        }
+        if (!currentFile || !player) {
+          $("liveCorruptStatus").textContent = "Primero carga un archivo SWF.";
+          return;
+        }
+        if (!$("assetCorrupt").checked) {
+          $("liveCorruptStatus").textContent = "Activa 'Corrupt internal assets' para usar el modo en tiempo real.";
+          return;
+        }
+        liveCorruptionActive = true;
+        liveCorruptionPass = 0;
+        const runId = ++liveCorruptionRunId;
+        $("liveCorruptButton").textContent = "■ Detener corrupción en tiempo real";
+        $("liveCorruptButton").classList.add("live-active");
+        $("liveCorruptStatus").textContent = "LIVE MODE ON · GENERATING VARIANTS…";
+        setStatus("LIVE CORRUPTION: STARTING");
+        runLiveCorruption(runId);
+        liveCorruptionTimer = setInterval(() => runLiveCorruption(runId), LIVE_CORRUPTION_INTERVAL_MS);
+      }
+
       async function loadFile(file) {
         if (!file) return;
+        stopLiveCorruption("Loading a new SWF…");
+        $("liveCorruptButton").disabled = true;
         if (!file.name.toLowerCase().endsWith(".swf")) {
           setStatus("ERROR: PLEASE SELECT A .SWF FILE");
           return;
@@ -872,6 +966,8 @@
           $("reloadButton").disabled = false;
           $("stopButton").disabled = false;
           await player.ruffle().load(currentObjectUrl);
+          $("liveCorruptButton").disabled = false;
+          $("liveCorruptStatus").textContent = "Listo · mutación nueva cada 2.5 segundos.";
           setStatus("PLAYING: " + file.name.toUpperCase());
         } catch (error) {
           console.error(error);
@@ -880,6 +976,8 @@
       }
 
       function unloadFile() {
+        stopLiveCorruption("Carga un SWF para activar el modo en tiempo real.");
+        $("liveCorruptButton").disabled = true;
         if (player) {
           try { player.ruffle().destroy(); } catch (_) {}
           player.remove();
@@ -926,8 +1024,12 @@
         $("vectorStrengthValue").textContent = $("vectorStrength").value + " / 1000";
       });
       $("assetCorrupt").addEventListener("change", () => {
+        if (!$("assetCorrupt").checked && liveCorruptionActive) {
+          stopLiveCorruption("Live mode stopped because internal corruption was disabled.");
+        }
         $("assetReport").textContent = $("assetCorrupt").checked ? "Asset mutator armed · reload a SWF to apply internal edits." : "Asset mutator disabled · reload a SWF to restore its original assets.";
       });
+      $("liveCorruptButton").addEventListener("click", toggleLiveCorruption);
 
       const dropZone = $("dropZone");
       ["dragenter", "dragover"].forEach((name) => dropZone.addEventListener(name, (event) => {
