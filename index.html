@@ -165,6 +165,7 @@
           <button class="btn" id="reloadButton" disabled>↻ Reload</button>
           <button class="btn pink" id="stopButton" disabled>■ Unload</button>
           <button class="btn" id="exportButton" disabled>↓ Export corrupted SWF</button>
+          <button class="btn" id="liveMutateButton" disabled>⌁ Mutate live</button>
           <input type="file" id="fileInput" accept=".swf,application/x-shockwave-flash">
         </div>
         <div class="upload-zone" id="dropZone">
@@ -181,7 +182,7 @@
         </div>
         <div class="controls">
           <div class="control-group">
-            <div class="control-heading"><strong>SWF INTERNAL MUTATOR</strong><span class="tiny">PRE-PLAY</span></div>
+            <div class="control-heading"><strong>SWF ASSET + LIVE MUTATOR</strong><span class="tiny">PRE-PLAY / RUNTIME</span></div>
             <label class="toggle">Corrupt internal assets <input type="checkbox" id="assetCorrupt" checked></label>
             <div style="margin-top:12px">
               <label class="range-label" for="assetMode">Asset targets</label>
@@ -209,7 +210,7 @@
                 <option value="posterize">Color posterization</option>
               </select>
             </div>
-            <p id="liveCorruptStatus" class="tiny" style="margin:13px 0 0;line-height:1.6">MUTACIÓN EN VIVO: requiere una compilación propia de Ruffle. La versión actual no recarga el SWF automáticamente.</p>
+            <p id="liveCorruptStatus" class="tiny" style="margin:13px 0 0;line-height:1.6">MUTACIÓN EN VIVO: muta las formas cargadas dentro de Ruffle sin detener ni reiniciar el timeline.</p>
             <p id="assetReport" class="tiny" style="margin:11px 0 0;line-height:1.6">Asset mutator: armed · source file stays untouched</p>
           </div>
 
@@ -218,7 +219,7 @@
     </div>
 
     <div class="notice">
-      <b>Local processing:</b> RTCFLE applies supported asset mutations to a temporary SWF copy before playback. The source file is never uploaded or overwritten. Ruffle loads the movie once and keeps its timeline running; automatic live replacement is disabled until RTCFLE has a custom Ruffle runtime with an in-memory shape mutation hook. An internet connection is required to load Ruffle from unpkg.
+      <b>Local processing:</b> The source file stays on your device and is never uploaded or overwritten. Pre-playback asset edits are applied to a temporary SWF copy. The custom Ruffle runtime can also mutate loaded Graphic and MorphShape vectors in memory while the timeline keeps running; live mutation does not reload the movie. The SWF export contains the pre-playback copy, not later in-memory live changes.
     </div>
     <footer>
       <span>RTCFLE // EXPERIMENTAL BUILD 0.1</span>
@@ -255,7 +256,7 @@
 
       const rufflePromise = new Promise((resolve, reject) => {
         const script = document.createElement("script");
-        script.src = "https://unpkg.com/@ruffle-rs/ruffle";
+        script.src = "ruffle/ruffle.js";
         script.async = true;
         script.onload = () => {
           ruffleReady = true;
@@ -872,6 +873,7 @@
           $("fileState").textContent = "SWF LOADED";
           $("reloadButton").disabled = false;
           $("stopButton").disabled = false;
+          $("liveMutateButton").disabled = false;
           await player.ruffle().load(currentObjectUrl);
           setStatus("PLAYING: " + file.name.toUpperCase());
         } catch (error) {
@@ -892,6 +894,7 @@
         currentFile = null;
         currentMutatedBlob = null;
         $("exportButton").disabled = true;
+        $("liveMutateButton").disabled = true;
         emptyState.style.display = "flex";
         $("fileState").textContent = "NO SWF LOADED";
         $("fileName").textContent = "No file selected";
@@ -909,6 +912,25 @@
       });
       $("reloadButton").addEventListener("click", () => { if (currentFile) loadFile(currentFile); });
       $("stopButton").addEventListener("click", unloadFile);
+      $("liveMutateButton").addEventListener("click", () => {
+        if (!player || !currentFile) return;
+        const intensity = Math.max(1, Math.min(100, Math.ceil(Number($("vectorStrength").value) / 10)));
+        const seed = new Uint32Array(1);
+        if (window.crypto && window.crypto.getRandomValues) {
+          window.crypto.getRandomValues(seed);
+        } else {
+          seed[0] = Math.floor(Math.random() * 0xFFFFFFFF);
+        }
+        try {
+          const changed = player.ruffle().mutateVectorShapes(intensity, seed[0]);
+          $("liveCorruptStatus").textContent = "MUTACIÓN EN VIVO: " + changed + " campos vectoriales cambiados · la película sigue reproduciéndose.";
+          setStatus("LIVE MUTATION: " + changed + " VECTOR FIELDS");
+        } catch (error) {
+          console.error("RTCFLE live mutation failed:", error);
+          $("liveCorruptStatus").textContent = "MUTACIÓN EN VIVO: fallo al mutar las formas.";
+          setStatus("LIVE MUTATION ERROR");
+        }
+      });
       $("exportButton").addEventListener("click", () => {
         if (!currentMutatedBlob) return;
         const downloadUrl = URL.createObjectURL(currentMutatedBlob);
