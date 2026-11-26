@@ -885,7 +885,7 @@
         while (position + 4 <= bytes.length && frames < 100000) {
           const header = ((bytes[position] << 24) | (bytes[position + 1] << 16) |
             (bytes[position + 2] << 8) | bytes[position + 3]) >>> 0;
-          if ((header & 0xFFE00000) !== 0xFFE00000) { position++; continue; }
+          if (((header & 0xFFE00000) >>> 0) !== 0xFFE00000) { position++; continue; }
           const version = (header >>> 19) & 3;
           const layer = (header >>> 17) & 3;
           const bitrateIndex = (header >>> 12) & 15;
