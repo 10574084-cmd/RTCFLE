@@ -178,8 +178,8 @@ pub(crate) fn mutate_shape(shape: &mut swf::Shape, seed: &mut u32, intensity: u8
     changed += distort_records(&mut shape.shape, seed, intensity);
     if changed > 0 {
         let bounds = ruffle_render::shape_utils::calculate_shape_bounds(&shape.shape);
-        shape.shape_bounds = bounds;
-        shape.edge_bounds = bounds;
+        shape.shape_bounds = shape.shape_bounds.union(&bounds);
+        shape.edge_bounds = shape.edge_bounds.union(&bounds);
     }
     changed
 }
