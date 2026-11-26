@@ -6,11 +6,11 @@ RTCFLE is a standalone-style SWF asset corruption tool for the browser, powered 
 
 - Load local SWF files by browsing or drag-and-drop.
 - Play the selected SWF through the Ruffle web player loaded from unpkg.
-- Corrupt supported internal vector assets: fill and gradient colors, line colors, and shape edge coordinates.
-- Corrupt supported embedded bitmap assets: lossless bitmap pixel data and decodable JPEG/PNG/GIF image resources.
+- Corrupt supported internal vector assets: fill and gradient colors, line colors, shape edge coordinates, move points, line widths, gradient stops, and fill transforms.
+- Vector corruption level from 1 to 1000. The upper range applies very strong geometric and style mutations.
+- Keep bitmap corruption on its own independent strength control.
 - Choose vector-only, image-only, or both asset targets.
-- Adjust internal corruption strength and algorithm.
-- Export the modified SWF as a separate file.
+- Choose a corruption algorithm and export the modified SWF as a separate file.
 - Keep the source file unchanged; mutation happens on a temporary in-memory copy.
 
 There are no screen filters, CRT overlays, visual jitter, hue/contrast effects, or display randomizers. RTCFLE edits supported resources inside the SWF file itself.
@@ -20,7 +20,7 @@ There are no screen filters, CRT overlays, visual jitter, hue/contrast effects, 
 - FWS (uncompressed) and CWS (zlib-compressed) file containers.
 - DefineShape, DefineShape2, DefineShape3, and DefineShape4 vector tags.
 - DefineBitsLossless / DefineBitsLossless2 formats 3, 4 (where defined), and 5.
-- Decodable DefineBitsJPEG2 / JPEG3 / JPEG4 bitmap assets. JPEG3/4 assets are converted to PNG resources when their alpha channel is merged.
+- Decodable DefineBitsJPEG2 / JPEG3 / JPEG4 bitmap assets.
 - Unsupported, malformed, or ZWS/LZMA input is left unchanged rather than forced through the mutator.
 
 ## Safety and file handling
