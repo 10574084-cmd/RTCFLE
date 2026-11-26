@@ -1,8 +1,8 @@
-name: Deploy RTCFLE to GitHub Pages
+name: Build custom Ruffle and deploy RTCFLE
 
 on:
   push:
-    branches: [main]
+    branches: [main, ruffle-live-mutation]
   workflow_dispatch:
 
 permissions:
@@ -15,15 +15,62 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  deploy:
+  build-and-deploy:
     environment:
       name: github-pages
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout RTCFLE
         uses: actions/checkout@v6
 
-      - name: Configure Pages
+      - name: Checkout pinned Ruffle source
+        uses: actions/checkout@v6
+        with:
+          repository: ruffle-rs/ruffle
+          ref: 9c6ab49454c96222a2d55db2c361cbf3faa44785
+          path: ruffle-source
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ruffle-source/web/package-lock.json
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Rust and WebAssembly target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install matching wasm-bindgen CLI
+        run: cargo install wasm-bindgen-cli --version 0.2.127 --locked
+
+      - name: Apply RTCFLE live-mutation patch
+        run: node scripts/patch-ruffle.mjs ruffle-source
+
+      - name: Install Ruffle web dependencies
+        working-directory: ruffle-source/web
+        run: npm ci
+
+      - name: Build custom Ruffle WebAssembly player
+        working-directory: ruffle-source/web
+        run: npm run build
+
+      - name: Bundle custom Ruffle with RTCFLE
+        run: |
+          test -f ruffle-source/web/packages/selfhosted/dist/ruffle.js
+          mkdir -p ruffle
+          cp -R ruffle-source/web/packages/selfhosted/dist/. ruffle/
+          test -f ruffle/ruffle.js
+          rm -rf ruffle-source
+
+      - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
       - name: Upload site
