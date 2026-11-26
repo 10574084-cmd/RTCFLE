@@ -2,7 +2,7 @@ name: Build custom Ruffle and deploy RTCFLE
 
 on:
   push:
-    branches: [main]
+    branches: [main, ruffle-live-mutation]
   pull_request:
     branches: [main]
   workflow_dispatch:
