@@ -84,15 +84,7 @@ patch("core/src/display_object/graphic.rs",
         "    }",
         "",
         "    pub(crate) fn invalidate_vector_mutation_cache(self) {",
-        "        if self.invalidate_cached_bitmap() {",
-        "            let mut parent = self.parent();",
-        "            while let Some(parent_object) = parent {",
-        "                if !parent_object.invalidate_cached_bitmap() {",
-        "                    break;",
-        "                }",
-        "                parent = parent_object.parent();",
-        "            }",
-        "        }",
+        "        self.invalidate_cached_bitmap();",
         "    }"
     ]);
 
