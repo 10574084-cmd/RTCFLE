@@ -11,7 +11,7 @@ RTCFLE is a browser-based SWF asset corruption tool powered by a custom-built Ru
 - Choose vector-only, image-only, or both asset targets.
 - Export the pre-playback-mutated SWF as a separate copy; the original file is not overwritten.
 - Mutate vector shapes inside the currently loaded Ruffle runtime while the movie keeps playing.
-- Apply Sprite Aspect Warp to live display-list instances, scaling local X and Y matrix axes independently to create wide/tall sprite proportions, with optional flips, shear, offsets, and near-collapse glitches. It changes current instances rather than shared character definitions and never calls `load()` or `reload()`.
+- Apply Sprite Aspect Warp to live display-list instances, scaling local X and Y matrix axes independently to create wide/tall sprite proportions, with optional flips, shear, offsets, and near-collapse glitches. It changes current instances rather than shared character definitions and never calls `load()` or `reload()`.\n- Choose ten additional live vector-only effects: Shatter Lines, Melt Geometry, Ripple Distortion, Mirror Flip, Pixel Grid, Spiral Twist, Outline Explosion, Gradient Storm, Ghost Contours, and Vector Chaos. The `ALL VECTOR EFFECTS` option runs all ten in one mutation pass.\n- Expand the SWF preview to browser fullscreen and exit fullscreen without leaving the page.
 
 ## Custom Ruffle runtime
 
@@ -32,7 +32,7 @@ The UI maps its 1–1000 vector slider to the runtime's 1–100 live-mutation in
 
 ## Limitations
 
-- Classic Mutation and Vector Stretch target vector `Graphic` and `MorphShape` definitions. Sprite Aspect Warp targets the current display-list instances (including nested movie clips, vector shapes, bitmaps, and text objects) by changing their transform matrices. It does not rewrite standalone bitmap pixel buffers, embedded font glyphs, text runs, or script-created `Drawing` content; pre-playback processing handles supported bitmap pixels separately.
+- Classic Mutation, Vector Stretch, and all ten dedicated vector effects target vector `Graphic` and `MorphShape` definitions. Sprite Aspect Warp targets the current display-list instances (including nested movie clips, vector shapes, bitmaps, and text objects) by changing their transform matrices. It does not rewrite standalone bitmap pixel buffers, embedded font glyphs, text runs, or script-created `Drawing` content; pre-playback processing handles supported bitmap pixels separately.
 - The runtime mutation affects the in-memory Ruffle movie. The SWF export button exports the separate pre-playback SWF copy; it does not serialize live in-memory Ruffle changes back into a SWF file.
 - The custom Ruffle build must complete successfully in GitHub Actions before the Pages deployment contains the updated player.
 - The mutation changes geometry and styles while preserving the SWF movie's timeline and script execution. It does not guarantee that every unusual SWF feature will remain visually coherent after heavy corruption.
