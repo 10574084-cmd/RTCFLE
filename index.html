@@ -682,6 +682,9 @@
       }
 
       async function canvasBlob(canvas, type) {
+        if (typeof canvas.convertToBlob === "function") {
+          return canvas.convertToBlob({ type, quality: 0.92 });
+        }
         return new Promise((resolve, reject) => {
           canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Bitmap export failed")), type, 0.92);
         });
@@ -840,6 +843,8 @@
         }
 
         $("fileName").textContent = file.name + "  ·  " + (file.size / 1024 / 1024).toFixed(2) + " MB";
+        currentMutatedBlob = null;
+        $("exportButton").disabled = true;
         setStatus("PROCESSING INTERNAL SWF ASSETS...");
         try {
           let playbackBlob = file;
