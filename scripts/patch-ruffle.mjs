@@ -354,4 +354,19 @@ patch("web/packages/core/src/internal/player/inner.tsx",
         "    }"
     ]);
 
+
+patch("core/src/display_object/graphic.rs",
+    ["        } else if !self.0.shared.get().shape.shape.is_empty() {"],
+    ["        } else if !self.0.shared.get().shape.borrow().shape.is_empty() {"]);
+
+patch("core/src/display_object/graphic.rs",
+    [
+        "                let shape = &self.0.shared.get().shape;",
+        "                return ruffle_render::shape_utils::shape_hit_test(shape, point, &local_matrix);"
+    ],
+    [
+        "                let shape = self.0.shared.get().shape.borrow();",
+        "                return ruffle_render::shape_utils::shape_hit_test(&*shape, point, &local_matrix);"
+    ]);
+
 console.log("Patched pinned Ruffle source for live in-place vector mutation.");
