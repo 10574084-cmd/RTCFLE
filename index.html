@@ -192,7 +192,12 @@
               </select>
             </div>
             <div class="range-row" style="margin-top:13px">
-              <div><label class="range-label" for="assetStrength">Internal corruption strength</label><input type="range" id="assetStrength" min="5" max="100" value="65"></div>
+              <div><label class="range-label" for="vectorStrength">Vector corruption level</label><input type="range" id="vectorStrength" min="1" max="1000" value="100"></div>
+              <span class="range-value" id="vectorStrengthValue">100 / 1000</span>
+            </div>
+            <p class="tiny" style="margin:-3px 0 13px;line-height:1.5">1000 = EXTREME · moves points, bends edges, scrambles fills, gradients, transforms and line widths.</p>
+            <div class="range-row">
+              <div><label class="range-label" for="assetStrength">Bitmap corruption strength</label><input type="range" id="assetStrength" min="5" max="100" value="65"></div>
               <span class="range-value" id="assetStrengthValue">65%</span>
             </div>
             <div style="margin-top:10px">
@@ -378,33 +383,77 @@
         align() { this.bit = Math.ceil(this.bit / 8) * 8; }
         readU8() { this.align(); if (this.bit + 8 > this.data.length * 8) throw new Error("Truncated SWF"); const v = this.data[this.bit >> 3]; this.bit += 8; return v; }
         readU16() { const a = this.readU8(), b = this.readU8(); return a | (b << 8); }
+        writeU8(value) {
+          this.align();
+          if ((this.bit >> 3) >= this.data.length) throw new Error("Truncated SWF byte write");
+          this.data[this.bit >> 3] = clampNumber(Math.round(value), 0, 255);
+          this.bit += 8;
+        }
+        writeU16(value) {
+          this.writeU8(value & 255);
+          this.writeU8((value >>> 8) & 255);
+        }
         skipRect() {
           const count = this.readBits(5);
           if (!count || count > 31) throw new Error("Invalid SWF RECT");
           for (let i = 0; i < 4; i++) this.readSigned(count);
           this.align();
         }
-        skipMatrix() {
+        skipMatrix(settings, stats) {
+          const strength = settings ? settings.strength : 0;
           const hasScale = this.readBits(1);
           if (hasScale) {
             const n = this.readBits(5);
-            this.readSigned(n); this.readSigned(n);
+            if (strength > 0 && n > 0) {
+              this.distortMatrixValue(n, strength, stats);
+              this.distortMatrixValue(n, strength, stats);
+            } else { this.readSigned(n); this.readSigned(n); }
           }
           const hasRotate = this.readBits(1);
           if (hasRotate) {
             const n = this.readBits(5);
-            this.readSigned(n); this.readSigned(n);
+            if (strength > 0 && n > 0) {
+              this.distortMatrixValue(n, strength, stats);
+              this.distortMatrixValue(n, strength, stats);
+            } else { this.readSigned(n); this.readSigned(n); }
           }
           const n = this.readBits(5);
-          this.readSigned(n); this.readSigned(n);
+          if (strength > 0 && n > 0) {
+            this.distortSigned(n, strength * 1.5, stats, "vectorMatrices");
+            this.distortSigned(n, strength * 1.5, stats, "vectorMatrices");
+          } else { this.readSigned(n); this.readSigned(n); }
           this.align();
         }
-        distortSigned(count, strength, stats) {
+        distortMatrixValue(count, strength, stats) {
           const oldValue = this.readSigned(count);
-          const scale = 1 + (Math.random() * 2 - 1) * strength * 0.85;
-          const offset = (Math.random() * 2 - 1) * strength * 520;
+          const chaos = Math.min(10, strength);
+          const factor = 1 + (Math.random() * 2 - 1) * chaos * 0.9;
+          const offset = (Math.random() * 2 - 1) * Math.pow(2, Math.max(0, count - 2)) * Math.min(0.8, chaos * 0.08);
+          this.writeSigned(count, oldValue * factor + offset);
+          stats.vectorMatrices++;
+        }
+        distortSigned(count, strength, stats, counter = "vectorEdges") {
+          const oldValue = this.readSigned(count);
+          const chaos = Math.min(10, strength);
+          const scale = 1 + (Math.random() * 2 - 1) * chaos * 0.85;
+          const offset = (Math.random() * 2 - 1) * chaos * 520;
           this.writeSigned(count, oldValue * scale + offset);
-          stats.vectorEdges++;
+          stats[counter]++;
+        }
+        mutateGradientRatio(settings, stats) {
+          const oldValue = this.readU8();
+          const spread = 255 * Math.min(1, settings.strength);
+          const chaos = Math.min(10, settings.strength);
+          this.writeU8(oldValue + (Math.random() * 2 - 1) * spread * (1 + chaos * 0.8));
+          stats.vectorGradientStops++;
+        }
+        mutateLineWidth(strength, stats) {
+          const oldValue = this.readU16();
+          const chaos = Math.min(10, strength);
+          const factor = 1 + (Math.random() * 2 - 1) * chaos * 0.9;
+          const offset = (Math.random() * 2 - 1) * chaos * 1200;
+          this.writeU16(clampNumber(oldValue * factor + offset, 0, 65535));
+          stats.vectorLineWidths++;
         }
         mutateColor(alpha, settings, stats) {
           this.align();
@@ -426,18 +475,18 @@
           if (type === 0x00) {
             cursor.mutateColor(version >= 3, settings, stats);
           } else if (type === 0x10 || type === 0x12 || type === 0x13) {
-            cursor.skipMatrix();
+            cursor.skipMatrix(settings, stats);
             const gradientHeader = cursor.readU8();
             const stops = gradientHeader & 15;
             if (!stops || stops > 15) throw new Error("Invalid gradient");
             for (let n = 0; n < stops; n++) {
-              cursor.readU8();
+              cursor.mutateGradientRatio(settings, stats);
               cursor.mutateColor(version >= 3, settings, stats);
             }
             if (type === 0x13) cursor.readU16();
           } else if (type >= 0x40 && type <= 0x43) {
             cursor.readU16();
-            cursor.skipMatrix();
+            cursor.skipMatrix(settings, stats);
           } else {
             throw new Error("Unsupported SWF fill style");
           }
@@ -447,7 +496,7 @@
         if (lineCount === 255 && version >= 2) lineCount = cursor.readU16();
         if (lineCount > 4096) throw new Error("Too many SWF line styles");
         for (let i = 0; i < lineCount; i++) {
-          cursor.readU16();
+          cursor.mutateLineWidth(settings.strength, stats);
           if (version < 4) {
             cursor.mutateColor(version >= 3, settings, stats);
           } else {
@@ -464,14 +513,14 @@
               const fillType = cursor.readU8();
               if (fillType === 0x00) cursor.mutateColor(true, settings, stats);
               else if (fillType === 0x10 || fillType === 0x12 || fillType === 0x13) {
-                cursor.skipMatrix();
+                cursor.skipMatrix(settings, stats);
                 const gh = cursor.readU8();
                 const stops = gh & 15;
                 if (!stops || stops > 15) throw new Error("Invalid line gradient");
-                for (let n = 0; n < stops; n++) { cursor.readU8(); cursor.mutateColor(true, settings, stats); }
+                for (let n = 0; n < stops; n++) { cursor.mutateGradientRatio(settings, stats); cursor.mutateColor(true, settings, stats); }
                 if (fillType === 0x13) cursor.readU16();
               } else if (fillType >= 0x40 && fillType <= 0x43) {
-                cursor.readU16(); cursor.skipMatrix();
+                cursor.readU16(); cursor.skipMatrix(settings, stats);
               } else throw new Error("Unsupported line fill");
             } else {
               cursor.mutateColor(true, settings, stats);
@@ -483,6 +532,8 @@
       function mutateShapeTag(payload, tagCode, settings, stats) {
         const edited = payload.slice();
         const beforeColors = stats.vectorColors, beforeEdges = stats.vectorEdges;
+        const beforeMoves = stats.vectorMoves, beforeWidths = stats.vectorLineWidths;
+        const beforeStops = stats.vectorGradientStops, beforeMatrices = stats.vectorMatrices;
         try {
           const cursor = new SwfBits(edited, 2);
           cursor.skipRect();
@@ -507,7 +558,8 @@
               const moveChange = (flags & 1) !== 0;
               if (moveChange) {
                 const n = cursor.readBits(5);
-                cursor.readSigned(n); cursor.readSigned(n);
+                cursor.distortSigned(n, settings.strength * 1.7, stats, "vectorMoves");
+                cursor.distortSigned(n, settings.strength * 1.7, stats, "vectorMoves");
               }
               if (fill0Change) cursor.readBits(fillBits);
               if (fill1Change) cursor.readBits(fillBits);
@@ -537,7 +589,9 @@
             }
           }
           if (!ended) throw new Error("Shape record limit reached");
-          if (stats.vectorColors > beforeColors || stats.vectorEdges > beforeEdges) {
+          if (stats.vectorColors > beforeColors || stats.vectorEdges > beforeEdges ||
+              stats.vectorMoves > beforeMoves || stats.vectorLineWidths > beforeWidths ||
+              stats.vectorGradientStops > beforeStops || stats.vectorMatrices > beforeMatrices) {
             stats.vectorShapes++;
             return edited;
           }
@@ -545,6 +599,10 @@
         } catch (_) {
           stats.vectorColors = beforeColors;
           stats.vectorEdges = beforeEdges;
+          stats.vectorMoves = beforeMoves;
+          stats.vectorLineWidths = beforeWidths;
+          stats.vectorGradientStops = beforeStops;
+          stats.vectorMatrices = beforeMatrices;
           return payload;
         }
       }
@@ -570,10 +628,10 @@
         if (raw.length < expected) return payload;
 
         if (format === 5) {
-          for (let p = 0; p < width * height; p++) corruptRgb(raw, p * 4, true, settings.strength, settings.style, 255, true);
+          for (let p = 0; p < width * height; p++) corruptRgb(raw, p * 4, true, settings.bitmapStrength, settings.style, 255, true);
         } else if (format === 3) {
           const colorBytes = tagCode === 36 ? 4 : 3;
-          for (let p = 0; p < paletteSize; p++) corruptRgb(raw, p * colorBytes, tagCode === 36, settings.strength, settings.style, 255, false);
+          for (let p = 0; p < paletteSize; p++) corruptRgb(raw, p * colorBytes, tagCode === 36, settings.bitmapStrength, settings.style, 255, false);
         } else if (format === 4) {
           const rowBytes = Math.ceil((width * 2) / 4) * 4;
           for (let y = 0; y < height; y++) {
@@ -581,10 +639,10 @@
               const p = y * rowBytes + x * 2;
               const word = raw[p] | (raw[p + 1] << 8);
               let r = (word >> 10) & 31, g = (word >> 5) & 31, b = word & 31;
-              if (settings.style === "swap" || (settings.style === "hybrid" && Math.random() < settings.strength)) {
+              if (settings.style === "swap" || (settings.style === "hybrid" && Math.random() < settings.bitmapStrength)) {
                 const old = r; r = g; g = b; b = old;
               } else {
-                const spread = 31 * settings.strength * 0.6;
+                const spread = 31 * settings.bitmapStrength * 0.6;
                 r += (Math.random() * 2 - 1) * spread;
                 g += (Math.random() * 2 - 1) * spread;
                 b += (Math.random() * 2 - 1) * spread;
@@ -645,7 +703,7 @@
             for (let i = 0; i < alpha.length; i++) pixels.data[i * 4 + 3] = alpha[i];
           }
           const data = pixels.data;
-          for (let p = 0; p < bitmap.width * bitmap.height; p++) corruptRgb(data, p * 4, true, settings.strength, settings.style, 255, false);
+          for (let p = 0; p < bitmap.width * bitmap.height; p++) corruptRgb(data, p * 4, true, settings.bitmapStrength, settings.style, 255, false);
           context.putImageData(pixels, 0, 0);
           const outputType = (tagCode === 21 && mime === "image/jpeg") ? "image/jpeg" : "image/png";
           const encoded = await canvasBlob(canvas, outputType);
@@ -712,15 +770,21 @@
       }
 
       async function corruptSwfAssets(file) {
-        const strength = Number($("assetStrength").value) / 100;
+        const bitmapStrength = Number($("assetStrength").value) / 100;
+        const vectorLevel = Number($("vectorStrength").value);
+        const vectorStrength = vectorLevel / 100;
         const mode = $("assetMode").value;
         const settings = {
-          strength,
+          strength: vectorStrength,
+          bitmapStrength,
           style: $("assetStyle").value,
           vectors: mode === "both" || mode === "vectors",
           bitmaps: mode === "both" || mode === "bitmaps"
         };
-        const stats = { vectorShapes: 0, vectorColors: 0, vectorEdges: 0, bitmapImages: 0 };
+        const stats = {
+          vectorShapes: 0, vectorColors: 0, vectorEdges: 0, vectorMoves: 0,
+          vectorLineWidths: 0, vectorGradientStops: 0, vectorMatrices: 0, bitmapImages: 0
+        };
         if (!settings.vectors && !settings.bitmaps) return { blob: file, stats, note: "No asset targets selected." };
         const source = new Uint8Array(await file.arrayBuffer());
         if (source.length < 12) return { blob: file, stats, note: "File too small for SWF header; original loaded." };
@@ -779,7 +843,7 @@
             const result = await corruptSwfAssets(file);
             playbackBlob = result.blob;
             hasMutations = playbackBlob !== file;
-            $("assetReport").textContent = result.note + " · Vectors: " + result.stats.vectorShapes + " shapes / " + result.stats.vectorEdges + " edges / " + result.stats.vectorColors + " colors · Images: " + result.stats.bitmapImages;
+            $("assetReport").textContent = result.note + " · Vector: " + result.stats.vectorShapes + " shapes, " + result.stats.vectorEdges + " edges, " + result.stats.vectorMoves + " moved points, " + result.stats.vectorLineWidths + " line widths, " + result.stats.vectorGradientStops + " gradient stops, " + result.stats.vectorMatrices + " matrices, " + result.stats.vectorColors + " colors · Images: " + result.stats.bitmapImages;
           } else {
             $("assetReport").textContent = "Internal asset mutator disabled · original SWF selected.";
           }
@@ -857,6 +921,9 @@
       });
       $("assetStrength").addEventListener("input", () => {
         $("assetStrengthValue").textContent = $("assetStrength").value + "%";
+      });
+      $("vectorStrength").addEventListener("input", () => {
+        $("vectorStrengthValue").textContent = $("vectorStrength").value + " / 1000";
       });
       $("assetCorrupt").addEventListener("change", () => {
         $("assetReport").textContent = $("assetCorrupt").checked ? "Asset mutator armed · reload a SWF to apply internal edits." : "Asset mutator disabled · reload a SWF to restore its original assets.";
