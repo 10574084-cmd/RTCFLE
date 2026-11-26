@@ -868,7 +868,7 @@ fn cartoonize_color(color: &mut swf::Color, strength: u8, outline: bool) -> u32 
     color.r = cartoon_channel(color.r, strength, outline);
     color.g = cartoon_channel(color.g, strength, outline);
     color.b = cartoon_channel(color.b, strength, outline);
-    u32::from(old != (color.r, color.g, color.b))
+    if old != (color.r, color.g, color.b) { 1 } else { 0 }
 }
 
 fn cartoonize_fill(fill: &mut FillStyle, strength: u8, outline: bool) -> u32 {
