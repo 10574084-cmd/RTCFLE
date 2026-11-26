@@ -14,6 +14,7 @@ RTCFLE is a browser-based SWF asset corruption tool powered by a custom-built Ru
 - Apply Sprite Aspect Warp to live display-list instances, scaling local X and Y matrix axes independently to create wide/tall sprite proportions, with optional flips, shear, offsets, and near-collapse glitches. It changes current instances rather than shared character definitions and never calls `load()` or `reload()`.
 - Choose ten additional live vector-only effects: Shatter Lines, Melt Geometry, Ripple Distortion, Mirror Flip, Pixel Grid, Spiral Twist, Outline Explosion, Gradient Storm, Ghost Contours, and Vector Chaos. The `ALL VECTOR EFFECTS` option runs all ten in one mutation pass.
 - Expand the SWF preview to browser fullscreen and exit fullscreen without leaving the page.
+- Optionally corrupt embedded SWF audio, with an independent off-by-default toggle, intensity slider, and selectable Hybrid, Bitcrush, Static, or Dropout glitch styles. The pre-playback pass handles DefineSound event-audio tags and supported SoundStreamBlock audio packets; MP3 frame headers, CRC fields, seek/sample prefixes, and SoundStreamBlock long tag headers are preserved.
 
 ## Custom Ruffle runtime
 
@@ -33,6 +34,8 @@ The mutation walks all character definitions registered in the loaded movie libr
 The UI maps its 1–1000 vector slider to the runtime's 1–100 live-mutation intensity range. Each click uses a new random seed, so successive passes do not intentionally repeat the same mutation sequence. Vector Stretch amplifies selected straight and curved edge deltas, shifts selected contour starts, stretches bitmap-fill mappings, widens or collapses selected strokes, alters color/gradient stops, and can set selected alpha-bearing fills to transparent. Its pre-playback path also smears selected bitmap scanlines. The mutations are randomized and local to vector segments; the engine does not semantically identify named body parts such as arms or faces.
 
 ## Limitations
+
+- Audio corruption is optional and disabled by default. It edits supported audio bytes in a temporary SWF copy rather than applying a live DSP effect to the Ruffle audio output. MP3 frame headers and timing fields are preserved, but changing compressed audio data can produce artifacts or make an individual clip less decodable. Unsupported codecs or malformed packets may be left unchanged. ZWS/LZMA-compressed SWFs are still loaded without pre-playback edits.
 
 - Classic Mutation, Vector Stretch, and all ten dedicated vector effects target vector `Graphic` and `MorphShape` definitions. Sprite Aspect Warp targets the current display-list instances (including nested movie clips, vector shapes, bitmaps, and text objects) by changing their transform matrices. It does not rewrite standalone bitmap pixel buffers, embedded font glyphs, text runs, or script-created `Drawing` content; pre-playback processing handles supported bitmap pixels separately.
 - The runtime mutation affects the in-memory Ruffle movie. The SWF export button exports the separate pre-playback SWF copy; it does not serialize live in-memory Ruffle changes back into a SWF file.

@@ -188,6 +188,21 @@
           <div class="control-group">
             <div class="control-heading"><strong>SWF ASSET + LIVE MUTATOR</strong><span class="tiny">PRE-PLAY / RUNTIME</span></div>
             <label class="toggle">Corrupt internal assets <input type="checkbox" id="assetCorrupt" checked></label>
+            <label class="toggle" style="margin-top:9px">Corrupt embedded audio <input type="checkbox" id="audioCorrupt"></label>
+            <div id="audioSettings" class="hidden" style="margin-top:11px;padding:11px;border:1px solid #29394b;border-radius:9px;background:rgba(255,255,255,.02)">
+              <div class="range-row" style="margin-top:0">
+                <div><label class="range-label" for="audioStrength">Audio corruption strength</label><input type="range" id="audioStrength" min="1" max="100" value="32"></div>
+                <span class="range-value" id="audioStrengthValue">32%</span>
+              </div>
+              <label class="range-label" for="audioStyle">Audio glitch type</label>
+              <select id="audioStyle" style="width:100%;padding:9px;border-radius:8px;background:#111c29;color:#dce8f6;border:1px solid #34465a">
+                <option value="hybrid">Hybrid digital glitches</option>
+                <option value="bitcrush">Bitcrush / low resolution</option>
+                <option value="static">Digital static</option>
+                <option value="dropouts">Audio dropouts</option>
+              </select>
+              <p class="tiny" style="margin:9px 0 0;line-height:1.5">Optional. Alters embedded event sounds and supported streamed audio blocks when the SWF is loaded. Reload the SWF to change the result.</p>
+            </div>
             <div style="margin-top:12px">
               <label class="range-label" for="vectorMode">Vector corruption mode</label>
               <select id="vectorMode" style="width:100%;padding:9px;border-radius:8px;background:#111c29;color:#dce8f6;border:1px solid #34465a">
@@ -262,7 +277,7 @@
     </div>
 
     <div class="notice">
-      <b>Local processing:</b> The source file stays on your device and is never uploaded or overwritten. Pre-playback asset edits are applied to a temporary SWF copy. Classic Mutation and Vector Stretch change shared vector definitions in memory. Sprite Aspect Warp changes the X/Y transform of current display-list instances, so the sprite changes aspect ratio immediately while the timeline keeps playing. These live changes do not rewrite the exported SWF copy.
+      <b>Local processing:</b> The source file stays on your device and is never uploaded or overwritten. Optional audio corruption is off by default; when enabled, it edits supported embedded event and streaming audio data in a temporary SWF copy. Pre-playback asset edits are applied to a temporary SWF copy. Classic Mutation and Vector Stretch change shared vector definitions in memory. Sprite Aspect Warp changes the X/Y transform of current display-list instances, so the sprite changes aspect ratio immediately while the timeline keeps playing. These live changes do not rewrite the exported SWF copy.
     </div>
     <footer>
       <span>RTCFLE // EXPERIMENTAL BUILD 0.1</span>
@@ -814,8 +829,123 @@
         }
       }
 
-      function encodeSwfTag(code, payload) {
-        const long = payload.length >= 63;
+
+      function mutateAudioRange(bytes, start, end, strength, style) {
+        const range = end - start;
+        if (range <= 0) return 0;
+        const power = Math.max(0.01, Math.min(1, strength));
+        let changed = 0;
+        if (style === "bitcrush") {
+          const dropBits = Math.max(1, Math.min(6, Math.round(1 + power * 5)));
+          const step = 1 << dropBits;
+          for (let i = start; i < end; i++) {
+            const old = bytes[i];
+            const next = Math.round(old / step) * step;
+            if (next !== old) { bytes[i] = clampNumber(next, 0, 255); changed++; }
+          }
+          return changed;
+        }
+        if (style === "dropouts") {
+          const bursts = Math.max(1, Math.round((range / 1400) * (0.4 + power * 4)));
+          for (let n = 0; n < bursts; n++) {
+            const length = Math.max(1, Math.round(2 + power * 30 + Math.random() * power * 90));
+            const from = start + Math.floor(Math.random() * Math.max(1, range - length + 1));
+            const to = Math.min(end, from + length);
+            for (let i = from; i < to; i++) {
+              if (bytes[i] !== 0) { bytes[i] = 0; changed++; }
+            }
+          }
+          return changed;
+        }
+        const probability = style === "static"
+          ? Math.min(0.42, 0.025 + power * 0.30)
+          : Math.min(0.30, 0.012 + power * 0.20);
+        for (let i = start; i < end; i++) {
+          if (Math.random() >= probability) continue;
+          const old = bytes[i];
+          let mask;
+          if (style === "static") {
+            mask = 1 + Math.floor(Math.random() * 255);
+          } else {
+            mask = (1 << Math.floor(Math.random() * 8)) | (Math.random() < power * 0.35 ? 0x80 : 0);
+          }
+          bytes[i] ^= mask;
+          if (bytes[i] !== old) changed++;
+        }
+        return changed;
+      }
+
+      function mutateMp3AudioFrames(bytes, start, settings) {
+        const bitrateMpeg1Layer3 = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0];
+        const bitrateMpeg2Layer3 = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0];
+        const baseRates = [44100, 48000, 32000];
+        let position = start;
+        let changed = 0;
+        let frames = 0;
+        while (position + 4 <= bytes.length && frames < 100000) {
+          const header = ((bytes[position] << 24) | (bytes[position + 1] << 16) |
+            (bytes[position + 2] << 8) | bytes[position + 3]) >>> 0;
+          if (((header & 0xFFE00000) >>> 0) !== 0xFFE00000) { position++; continue; }
+          const version = (header >>> 19) & 3;
+          const layer = (header >>> 17) & 3;
+          const bitrateIndex = (header >>> 12) & 15;
+          const rateIndex = (header >>> 10) & 3;
+          const padding = (header >>> 9) & 1;
+          if (version === 1 || layer !== 1 || bitrateIndex === 0 || bitrateIndex === 15 || rateIndex === 3) {
+            position++;
+            continue;
+          }
+          const bitrate = (version === 3 ? bitrateMpeg1Layer3 : bitrateMpeg2Layer3)[bitrateIndex];
+          const divisor = version === 3 ? 1 : (version === 2 ? 2 : 4);
+          const sampleRate = baseRates[rateIndex] / divisor;
+          const frameLength = Math.floor((version === 3 ? 144000 : 72000) * bitrate / sampleRate) + padding;
+          if (frameLength < 24 || position + frameLength > bytes.length) { position++; continue; }
+          const hasCrc = ((header >>> 16) & 1) === 0;
+          const bodyStart = position + 4 + (hasCrc ? 2 : 0);
+          const bodyEnd = position + frameLength;
+          changed += mutateAudioRange(bytes, bodyStart, bodyEnd, settings.audioStrength, settings.audioStyle);
+          frames++;
+          position = bodyEnd;
+        }
+        return { changed, frames };
+      }
+
+      function mutateAudioTag(payload, tagCode, codec, settings, stats) {
+        if (!settings.audio || !payload || payload.length < 2) return payload;
+        const edited = payload.slice();
+        let audioStart = 0;
+        if (tagCode === 14) {
+          if (edited.length < 7) return payload;
+          codec = (edited[2] >>> 4) & 15;
+          audioStart = codec === 2 ? 9 : 7;
+        } else if (tagCode === 19) {
+          if (codec === null || codec === undefined) return payload;
+          audioStart = codec === 2 ? 4 : 0;
+        } else {
+          return payload;
+        }
+        if (audioStart >= edited.length) return payload;
+        let changed = 0;
+        if (codec === 2) {
+          const result = mutateMp3AudioFrames(edited, audioStart, settings);
+          changed = result.changed;
+          if (!result.frames) {
+            changed = mutateAudioRange(edited, audioStart, edited.length, settings.audioStrength, settings.audioStyle);
+          }
+        } else {
+          changed = mutateAudioRange(edited, audioStart, edited.length, settings.audioStrength, settings.audioStyle);
+        }
+        if (changed > 0) {
+          stats.audioClips++;
+          stats.audioBytes += changed;
+          stats.audioCodecs[codec] = (stats.audioCodecs[codec] || 0) + 1;
+          return edited;
+        }
+        return payload;
+      }
+
+      function encodeSwfTag(code, payload, forceLong = false) {
+        const long = forceLong || payload.length >= 63;
         const header = new Uint8Array(long ? 6 : 2);
         const view = new DataView(header.buffer);
         view.setUint16(0, (code << 6) | (long ? 63 : payload.length), true);
@@ -828,6 +958,7 @@
         const output = [];
         let position = start;
         let processed = 0;
+        let streamCompression = null;
         while (position + 2 <= end && processed < 1000000) {
           const header = data[position] | (data[position + 1] << 8);
           position += 2;
@@ -846,6 +977,12 @@
           if (code === 39 && payload.length >= 4) {
             const spriteTags = await processSwfTags(payload, 4, payload.length, depth + 1, swfVersion, settings, stats);
             payload = bytesJoin([payload.slice(0, 4), spriteTags]);
+          } else if (settings.audio && (code === 18 || code === 45)) {
+            if (payload.length >= 2) streamCompression = (payload[1] >>> 4) & 15;
+          } else if (settings.audio && code === 14) {
+            payload = mutateAudioTag(payload, code, null, settings, stats);
+          } else if (settings.audio && code === 19) {
+            payload = mutateAudioTag(payload, code, streamCompression, settings, stats);
           } else if (settings.vectors && (code === 2 || code === 22 || code === 32 || code === 83)) {
             payload = mutateShapeTag(payload, code, settings, stats);
           } else if (settings.bitmaps && (code === 20 || code === 36)) {
@@ -856,7 +993,7 @@
             payload = changed.payload;
           }
 
-          output.push(encodeSwfTag(outputCode, payload));
+          output.push(encodeSwfTag(outputCode, payload, code === 19));
           processed++;
           if (code === 0) break;
         }
@@ -870,19 +1007,24 @@
         const vectorLevel = Number($("vectorStrength").value);
         const vectorStrength = vectorLevel / 100;
         const mode = $("assetMode").value;
+        const assetsEnabled = $("assetCorrupt").checked;
         const settings = {
           strength: vectorStrength,
           vectorMode: $("vectorMode").value,
           bitmapStrength,
           style: $("assetStyle").value,
-          vectors: mode === "both" || mode === "vectors",
-          bitmaps: mode === "both" || mode === "bitmaps"
+          vectors: assetsEnabled && (mode === "both" || mode === "vectors"),
+          bitmaps: assetsEnabled && (mode === "both" || mode === "bitmaps"),
+          audio: $("audioCorrupt").checked,
+          audioStrength: Number($("audioStrength").value) / 100,
+          audioStyle: $("audioStyle").value
         };
         const stats = {
           vectorShapes: 0, vectorColors: 0, vectorEdges: 0, vectorMoves: 0,
-          vectorLineWidths: 0, vectorGradientStops: 0, vectorMatrices: 0, bitmapImages: 0
+          vectorLineWidths: 0, vectorGradientStops: 0, vectorMatrices: 0, bitmapImages: 0,
+          audioClips: 0, audioBytes: 0, audioCodecs: {}
         };
-        if (!settings.vectors && !settings.bitmaps) return { blob: file, stats, note: "No asset targets selected." };
+        if (!settings.vectors && !settings.bitmaps && !settings.audio) return { blob: file, stats, note: "No asset targets selected." };
         const source = new Uint8Array(await file.arrayBuffer());
         if (source.length < 12) return { blob: file, stats, note: "File too small for SWF header; original loaded." };
         const signature = String.fromCharCode(source[0], source[1], source[2]);
@@ -905,7 +1047,7 @@
           const tagStart = headerBits.bit >> 3;
           if (tagStart < 5 || tagStart >= body.length) throw new Error("Invalid movie header");
           const transformed = await processSwfTags(body, tagStart, body.length, 0, version, settings, stats);
-          if (!stats.vectorShapes && !stats.bitmapImages) return { blob: file, stats, note: "No supported internal assets found; original loaded." };
+          if (!stats.vectorShapes && !stats.bitmapImages && !stats.audioClips) return { blob: file, stats, note: "No supported internal assets found; original loaded." };
           const finalBody = bytesJoin([body.slice(0, tagStart), transformed]);
           const output = new Uint8Array(8 + finalBody.length);
           output.set([70, 87, 83, version], 0);
@@ -936,11 +1078,11 @@
         try {
           let playbackBlob = file;
           let hasMutations = false;
-          if ($("assetCorrupt").checked) {
+          if ($("assetCorrupt").checked || $("audioCorrupt").checked) {
             const result = await corruptSwfAssets(file);
             playbackBlob = result.blob;
             hasMutations = playbackBlob !== file;
-            $("assetReport").textContent = result.note + " · Mode: " + ($("vectorMode").value === "stretch" ? "Vector Stretch" : "Classic Mutation") + " · Vector: " + result.stats.vectorShapes + " shapes, " + result.stats.vectorEdges + " edges, " + result.stats.vectorMoves + " moved points, " + result.stats.vectorLineWidths + " line widths, " + result.stats.vectorGradientStops + " gradient stops, " + result.stats.vectorMatrices + " matrices, " + result.stats.vectorColors + " colors · Images: " + result.stats.bitmapImages;
+            $("assetReport").textContent = result.note + " · Mode: " + ($("vectorMode").value === "stretch" ? "Vector Stretch" : "Classic Mutation") + " · Vector: " + result.stats.vectorShapes + " shapes, " + result.stats.vectorEdges + " edges, " + result.stats.vectorMoves + " moved points, " + result.stats.vectorLineWidths + " line widths, " + result.stats.vectorGradientStops + " gradient stops, " + result.stats.vectorMatrices + " matrices, " + result.stats.vectorColors + " colors · Images: " + result.stats.bitmapImages + " · Audio: " + result.stats.audioClips + " clips / " + result.stats.audioBytes + " bytes changed";
           } else {
             $("assetReport").textContent = "Internal asset mutator disabled · original SWF selected.";
           }
@@ -1073,6 +1215,15 @@
         anchor.click();
         anchor.remove();
         setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+      });
+      $("audioCorrupt").addEventListener("change", () => {
+        $("audioSettings").classList.toggle("hidden", !$("audioCorrupt").checked);
+        $("assetReport").textContent = $("audioCorrupt").checked
+          ? "Audio corruption enabled · reload the SWF to apply the selected audio glitch."
+          : "Audio corruption disabled · reload the SWF to restore its original audio.";
+      });
+      $("audioStrength").addEventListener("input", () => {
+        $("audioStrengthValue").textContent = $("audioStrength").value + "%";
       });
       $("assetStrength").addEventListener("input", () => {
         $("assetStrengthValue").textContent = $("assetStrength").value + "%";
