@@ -111,6 +111,7 @@
     .notice b { color: #dce8f6; }
     footer { display: flex; justify-content: space-between; gap: 10px; margin-top: 22px; color: #66778c; font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; }
     .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .hidden { display: none !important; }
     @media (max-width: 850px) {
       .layout { grid-template-columns: 1fr; }
       .top-status { display: none; }
@@ -217,7 +218,26 @@
                 <option value="posterize">Color posterization</option>
               </select>
             </div>
-            <p id="liveCorruptStatus" class="tiny" style="margin:13px 0 0;line-height:1.6">MUTACIÓN EN VIVO: muta las formas cargadas dentro de Ruffle sin detener ni reiniciar el timeline.</p>
+            <div style="margin-top:15px">
+              <label class="range-label" for="liveMode">Live runtime corruption mode</label>
+              <select id="liveMode" style="width:100%;padding:9px;border-radius:8px;background:#111c29;color:#dce8f6;border:1px solid #34465a">
+                <option value="classic">Classic Mutation</option>
+                <option value="stretch">Vector Stretch</option>
+                <option value="aspect">Sprite Aspect Warp</option>
+              </select>
+            </div>
+            <div id="aspectWarpSettings" class="hidden" style="margin-top:12px;padding:11px;border:1px solid #29394b;border-radius:9px;background:rgba(255,255,255,.02)">
+              <div class="range-row" style="margin-top:0">
+                <div><label class="range-label" for="aspectWarpStrength">Aspect-ratio distortion</label><input type="range" id="aspectWarpStrength" min="1" max="1000" value="420"></div>
+                <span class="range-value" id="aspectWarpStrengthValue">420 / 1000</span>
+              </div>
+              <div class="range-row" style="margin-bottom:0">
+                <div><label class="range-label" for="aspectGlitchChance">Extra matrix glitches</label><input type="range" id="aspectGlitchChance" min="0" max="100" value="32"></div>
+                <span class="range-value" id="aspectGlitchChanceValue">32%</span>
+              </div>
+              <p class="tiny" style="margin:9px 0 0;line-height:1.5">Scales live sprite instances wider or taller; extra glitches can flip, shear, shift or nearly collapse a sprite.</p>
+            </div>
+            <p id="liveCorruptStatus" class="tiny" style="margin:13px 0 0;line-height:1.6">LIVE MUTATION: choose a runtime mode. Changes apply to the current movie without reloading it.</p>
             <p id="assetReport" class="tiny" style="margin:11px 0 0;line-height:1.6">Asset mutator: armed · source file stays untouched</p>
           </div>
 
@@ -226,7 +246,7 @@
     </div>
 
     <div class="notice">
-      <b>Local processing:</b> The source file stays on your device and is never uploaded or overwritten. Pre-playback asset edits are applied to a temporary SWF copy. The custom Ruffle runtime can also mutate loaded Graphic and MorphShape vectors in memory while the timeline keeps running; live mutation does not reload the movie. The SWF export contains the pre-playback copy, not later in-memory live changes.
+      <b>Local processing:</b> The source file stays on your device and is never uploaded or overwritten. Pre-playback asset edits are applied to a temporary SWF copy. Classic Mutation and Vector Stretch change shared vector definitions in memory. Sprite Aspect Warp changes the X/Y transform of current display-list instances, so the sprite changes aspect ratio immediately while the timeline keeps playing. These live changes do not rewrite the exported SWF copy.
     </div>
     <footer>
       <span>RTCFLE // EXPERIMENTAL BUILD 0.1</span>
@@ -263,7 +283,7 @@
 
       const rufflePromise = new Promise((resolve, reject) => {
         const script = document.createElement("script");
-        script.src = "ruffle/ruffle.js?v=vector-stretch-1";
+        script.src = "ruffle/ruffle.js?v=sprite-aspect-warp-1";
         script.async = true;
         script.onload = () => {
           ruffleReady = true;
@@ -973,7 +993,10 @@
       $("stopButton").addEventListener("click", unloadFile);
       $("liveMutateButton").addEventListener("click", () => {
         if (!player || !currentFile) return;
-        const intensity = Math.max(1, Math.min(100, Math.ceil(Number($("vectorStrength").value) / 10)));
+        const mode = $("liveMode").value;
+        const strengthControl = mode === "aspect" ? $("aspectWarpStrength") : $("vectorStrength");
+        const intensity = Math.max(1, Math.min(100, Math.ceil(Number(strengthControl.value) / 10)));
+        const glitchChance = Number($("aspectGlitchChance").value);
         const seed = new Uint32Array(1);
         if (window.crypto && window.crypto.getRandomValues) {
           window.crypto.getRandomValues(seed);
@@ -981,16 +1004,22 @@
           seed[0] = Math.floor(Math.random() * 0xFFFFFFFF);
         }
         try {
-          const mode = $("vectorMode").value;
-          const changed = mode === "stretch"
-            ? player.ruffle().mutateVectorStretch(intensity, seed[0])
-            : player.ruffle().mutateVectorShapes(intensity, seed[0]);
-          const modeName = mode === "stretch" ? "VECTOR STRETCH" : "CLASSIC MUTATION";
-          $("liveCorruptStatus").textContent = "MUTACIÓN EN VIVO · " + modeName + ": " + changed + " campos vectoriales modificados; el timeline sigue reproduciéndose.";
-          setStatus(modeName + ": " + changed + " VECTOR FIELDS");
+          let changed = 0;
+          let modeName = "CLASSIC MUTATION";
+          if (mode === "stretch") {
+            changed = player.ruffle().mutateVectorStretch(intensity, seed[0]);
+            modeName = "VECTOR STRETCH";
+          } else if (mode === "aspect") {
+            changed = player.ruffle().mutateSpriteAspectWarp(intensity, glitchChance, seed[0]);
+            modeName = "SPRITE ASPECT WARP";
+          } else {
+            changed = player.ruffle().mutateVectorShapes(intensity, seed[0]);
+          }
+          $("liveCorruptStatus").textContent = "LIVE · " + modeName + ": " + changed + " live instances/fields changed. The movie was not reloaded.";
+          setStatus(modeName + ": " + changed + " LIVE CHANGES");
         } catch (error) {
           console.error("RTCFLE live mutation failed:", error);
-          $("liveCorruptStatus").textContent = "MUTACIÓN EN VIVO: fallo al mutar las formas. Comprueba que el bundle personalizado esté actualizado.";
+          $("liveCorruptStatus").textContent = "LIVE MUTATION FAILED. Make sure the latest custom Ruffle bundle is loaded.";
           setStatus("LIVE MUTATION ERROR");
         }
       });
@@ -1010,6 +1039,20 @@
       });
       $("vectorStrength").addEventListener("input", () => {
         $("vectorStrengthValue").textContent = $("vectorStrength").value + " / 1000";
+      });
+      $("aspectWarpStrength").addEventListener("input", () => {
+        $("aspectWarpStrengthValue").textContent = $("aspectWarpStrength").value + " / 1000";
+      });
+      $("aspectGlitchChance").addEventListener("input", () => {
+        $("aspectGlitchChanceValue").textContent = $("aspectGlitchChance").value + "%";
+      });
+      $("liveMode").addEventListener("change", () => {
+        const isAspect = $("liveMode").value === "aspect";
+        $("aspectWarpSettings").classList.toggle("hidden", !isAspect);
+        $("liveMutateButton").textContent = isAspect ? "↔ Aspect Warp" : ($("liveMode").value === "stretch" ? "↗ Vector Stretch" : "⌁ Mutate live");
+        $("liveCorruptStatus").textContent = isAspect
+          ? "SPRITE ASPECT WARP: changes the live X/Y scale of current display-list instances; it does not rewrite shared vector shapes."
+          : "LIVE MUTATION: " + ($("liveMode").value === "stretch" ? "Vector Stretch" : "Classic Mutation") + " changes the live movie without reloading it.";
       });
       $("assetCorrupt").addEventListener("change", () => {
         $("assetReport").textContent = $("assetCorrupt").checked ? "Asset mutator armed · reload a SWF to apply internal edits." : "Asset mutator disabled · reload a SWF to restore its original assets.";

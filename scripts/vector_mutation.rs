@@ -426,3 +426,86 @@ pub(crate) fn mutate_stretch_morph_shape(
     }
     changed
 }
+
+
+/// Randomly changes the aspect ratio of a live display-object instance.
+///
+/// The x and y basis vectors are scaled independently, keeping the object's
+/// position and rotation while producing the familiar wide/tall sprite warp.
+/// A second probability controls extra shear, flips, offsets, or near-collapse.
+pub(crate) fn mutate_sprite_aspect_matrix(
+    matrix: &mut ruffle_render::matrix::Matrix,
+    seed: &mut u32,
+    intensity: u8,
+    glitch_chance: u8,
+) -> bool {
+    let intensity = intensity.clamp(1, 100);
+    let selection_chance = 28 + (u32::from(intensity) * 58 / 100);
+    if next(seed) % 100 >= selection_chance {
+        return false;
+    }
+
+    fn factor(seed: &mut u32, intensity: u8) -> f32 {
+        let base = match next(seed) % 9 {
+            0 => 0.08,
+            1 => 0.18,
+            2 => 0.32,
+            3 => 0.55,
+            4 => 0.78,
+            5 => 1.35,
+            6 => 1.9,
+            7 => 2.7,
+            _ => 4.0,
+        };
+        let amount = 0.30 + f32::from(intensity) / 100.0 * 0.70;
+        (1.0 + (base - 1.0) * amount).clamp(0.025, 5.0)
+    }
+
+    let mut scale_x = factor(seed, intensity);
+    let mut scale_y = factor(seed, intensity);
+
+    // Prefer a visibly different ratio instead of accidentally scaling both axes equally.
+    if (scale_x - scale_y).abs() < 0.38 {
+        if next(seed) & 1 == 0 {
+            scale_x = (scale_x * 2.0).clamp(0.025, 5.0);
+        } else {
+            scale_y = (scale_y * 2.0).clamp(0.025, 5.0);
+        }
+    }
+
+    // Matrix columns are the transformed local X and Y axes.
+    matrix.a *= scale_x;
+    matrix.b *= scale_x;
+    matrix.c *= scale_y;
+    matrix.d *= scale_y;
+
+    if next(seed) % 100 < u32::from(glitch_chance.min(100)) {
+        let shear = 0.15 + (next(seed) % 90) as f32 / 100.0;
+        let direction = if next(seed) & 1 == 0 { -1.0 } else { 1.0 };
+        match next(seed) % 6 {
+            0 => matrix.a = -matrix.a,
+            1 => matrix.d = -matrix.d,
+            2 => matrix.c += matrix.a * shear * direction,
+            3 => matrix.b += matrix.d * shear * direction,
+            4 => {
+                let delta = ((next(seed) % 5000) as i32 - 2500) * 2;
+                matrix.tx = Twips::new(matrix.tx.get().saturating_add(delta));
+            }
+            _ => {
+                if next(seed) & 1 == 0 {
+                    matrix.a *= 0.025;
+                    matrix.b *= 0.025;
+                } else {
+                    matrix.c *= 0.025;
+                    matrix.d *= 0.025;
+                }
+            }
+        }
+    }
+
+    matrix.a = matrix.a.clamp(-20.0, 20.0);
+    matrix.b = matrix.b.clamp(-20.0, 20.0);
+    matrix.c = matrix.c.clamp(-20.0, 20.0);
+    matrix.d = matrix.d.clamp(-20.0, 20.0);
+    true
+}

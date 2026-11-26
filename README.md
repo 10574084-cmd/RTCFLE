@@ -10,7 +10,8 @@ RTCFLE is a browser-based SWF asset corruption tool powered by a custom-built Ru
 - Corrupt supported bitmap assets with an independent strength control; Vector Stretch can smear selected bitmap scanlines.
 - Choose vector-only, image-only, or both asset targets.
 - Export the pre-playback-mutated SWF as a separate copy; the original file is not overwritten.
-- Mutate vector shapes inside the currently loaded Ruffle runtime while the movie keeps playing. Classic Mutation and Vector Stretch use separate runtime paths and neither calls `load()` or `reload()`.
+- Mutate vector shapes inside the currently loaded Ruffle runtime while the movie keeps playing.
+- Apply Sprite Aspect Warp to live display-list instances, scaling local X and Y matrix axes independently to create wide/tall sprite proportions, with optional flips, shear, offsets, and near-collapse glitches. It changes current instances rather than shared character definitions and never calls `load()` or `reload()`.
 
 ## Custom Ruffle runtime
 
@@ -23,15 +24,15 @@ The patch adds:
 - Recalculation and expansion of SWF geometry bounds after vector changes, so culling and hit testing do not keep stale rectangles.
 - Invalidation of Graphic tessellation handles and MorphShape's cached interpolated frames whenever their source vectors change.
 - Invalidation of active display-object bitmap caches and their ancestors.
-- WASM methods and public JavaScript methods: `player.ruffle().mutateVectorShapes(intensity, seed)` and `player.ruffle().mutateVectorStretch(intensity, seed)`.
+- WASM methods and public JavaScript methods: `player.ruffle().mutateVectorShapes(intensity, seed)`, `player.ruffle().mutateVectorStretch(intensity, seed)`, and `player.ruffle().mutateSpriteAspectWarp(intensity, glitchChance, seed)`.
 
-The mutation walks all character definitions registered in the loaded movie libraries, including symbols used by later timeline frames, rather than only changing whatever is visible at the instant the button is pressed. All active Stage levels are traversed to invalidate display-object bitmap caches and their ancestors, so the next normal render draws the changed vectors. The timeline is not reloaded or restarted.
+The mutation walks all character definitions registered in the loaded movie libraries, including symbols used by later timeline frames, rather than only changing whatever is visible at the instant the button is pressed. All active Stage levels are traversed to invalidate display-object bitmap caches and their ancestors, so the next normal render draws the changed vectors. The timeline is not reloaded or restarted. Sprite Aspect Warp traverses the active display list and changes each selected instance's local matrix, preserving its translation/rotation basis while scaling the local X and Y axes independently. Display-object bitmap caches and their ancestors are invalidated after each selected instance changes.
 
 The UI maps its 1–1000 vector slider to the runtime's 1–100 live-mutation intensity range. Each click uses a new random seed, so successive passes do not intentionally repeat the same mutation sequence. Vector Stretch amplifies selected straight and curved edge deltas, shifts selected contour starts, stretches bitmap-fill mappings, widens or collapses selected strokes, alters color/gradient stops, and can set selected alpha-bearing fills to transparent. Its pre-playback path also smears selected bitmap scanlines. The mutations are randomized and local to vector segments; the engine does not semantically identify named body parts such as arms or faces.
 
 ## Limitations
 
-- The runtime mutation currently targets vector `Graphic` and `MorphShape` definitions, including bitmap/gradient fill matrices so embedded textures can be stretched in place. It does not rewrite standalone bitmap pixel buffers, embedded font glyphs, text runs, or script-created `Drawing` content; pre-playback processing handles supported bitmap pixels separately.
+- Classic Mutation and Vector Stretch target vector `Graphic` and `MorphShape` definitions. Sprite Aspect Warp targets the current display-list instances (including nested movie clips, vector shapes, bitmaps, and text objects) by changing their transform matrices. It does not rewrite standalone bitmap pixel buffers, embedded font glyphs, text runs, or script-created `Drawing` content; pre-playback processing handles supported bitmap pixels separately.
 - The runtime mutation affects the in-memory Ruffle movie. The SWF export button exports the separate pre-playback SWF copy; it does not serialize live in-memory Ruffle changes back into a SWF file.
 - The custom Ruffle build must complete successfully in GitHub Actions before the Pages deployment contains the updated player.
 - The mutation changes geometry and styles while preserving the SWF movie's timeline and script execution. It does not guarantee that every unusual SWF feature will remain visually coherent after heavy corruption.
