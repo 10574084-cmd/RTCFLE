@@ -828,5 +828,167 @@ patch("web/packages/core/src/internal/player/inner.tsx",
         "    mutateSpriteAspectWarp(intensity: number, glitchChance: number, seed: number): number {"
     ]);
 
-console.log("Patched pinned Ruffle source for classic mutation, Vector Stretch, Sprite Aspect Warp, and ten vector effects.");
+
+
+// Per-mode vector appearance switches: independently preserve/corrupt colors
+// and optionally apply a posterized cartoon palette with heavier outlines.
+patch("core/src/display_object/graphic.rs",
+    [
+        "    pub(crate) fn invalidate_vector_mutation_cache(self) {",
+        "        self.invalidate_cached_bitmap();",
+        "    }"
+    ],
+    [
+        "    pub(crate) fn mutate_with_appearance_options(",
+        "        self, mc: &Mutation<'gc>, seed: &mut u32, intensity: u8, kind: u8, mode: u8,",
+        "        corrupt_colors: bool, cartoonize: bool, cartoon_strength: u8,",
+        "    ) -> u32 {",
+        "        let changed = {",
+        "            let mut shape = unlock!(Gc::write(mc, self.0.shared.get()), GraphicShared, shape).borrow_mut();",
+        "            match kind {",
+        "                0 => crate::vector_mutation::mutate_shape_with_options(&mut shape, seed, intensity, corrupt_colors, cartoonize, cartoon_strength),",
+        "                1 => crate::vector_mutation::mutate_stretch_shape_with_options(&mut shape, seed, intensity, corrupt_colors, cartoonize, cartoon_strength),",
+        "                _ => crate::vector_mutation::mutate_vector_effect_shape_with_options(&mut shape, seed, intensity, mode, corrupt_colors, cartoonize, cartoon_strength),",
+        "            }",
+        "        };",
+        "        if changed > 0 { self.0.shared.get().scaled_handle.borrow_mut().clear(); }",
+        "        changed",
+        "    }",
+        "",
+        "    pub(crate) fn invalidate_vector_mutation_cache(self) {",
+        "        self.invalidate_cached_bitmap();",
+        "    }"
+    ]);
+
+patch("core/src/display_object/morph_shape.rs",
+    [
+        "    pub(crate) fn invalidate_vector_mutation_cache(self) {",
+        "        self.invalidate_cached_bitmap();",
+        "    }"
+    ],
+    [
+        "    pub(crate) fn mutate_with_appearance_options(",
+        "        self, mc: &Mutation<'gc>, seed: &mut u32, intensity: u8, kind: u8, mode: u8,",
+        "        corrupt_colors: bool, cartoonize: bool, cartoon_strength: u8,",
+        "    ) -> u32 {",
+        "        let mut changed = {",
+        "            let mut start = unlock!(Gc::write(mc, self.0.shared.get()), MorphShapeShared, start).borrow_mut();",
+        "            match kind {",
+        "                0 => crate::vector_mutation::mutate_morph_shape_with_options(&mut start, seed, intensity, corrupt_colors, cartoonize, cartoon_strength),",
+        "                1 => crate::vector_mutation::mutate_stretch_morph_shape_with_options(&mut start, seed, intensity, corrupt_colors, cartoonize, cartoon_strength),",
+        "                _ => crate::vector_mutation::mutate_vector_effect_morph_shape_with_options(&mut start, seed, intensity, mode, corrupt_colors, cartoonize, cartoon_strength),",
+        "            }",
+        "        };",
+        "        changed += {",
+        "            let mut end = unlock!(Gc::write(mc, self.0.shared.get()), MorphShapeShared, end).borrow_mut();",
+        "            match kind {",
+        "                0 => crate::vector_mutation::mutate_morph_shape_with_options(&mut end, seed, intensity, corrupt_colors, cartoonize, cartoon_strength),",
+        "                1 => crate::vector_mutation::mutate_stretch_morph_shape_with_options(&mut end, seed, intensity, corrupt_colors, cartoonize, cartoon_strength),",
+        "                _ => crate::vector_mutation::mutate_vector_effect_morph_shape_with_options(&mut end, seed, intensity, mode, corrupt_colors, cartoonize, cartoon_strength),",
+        "            }",
+        "        };",
+        "        if changed > 0 { self.0.shared.get().frames.borrow_mut().clear(); }",
+        "        changed",
+        "    }",
+        "",
+        "    pub(crate) fn invalidate_vector_mutation_cache(self) {",
+        "        self.invalidate_cached_bitmap();",
+        "    }"
+    ]);
+
+patch("core/src/player.rs",
+    ["    pub fn mutate_sprite_aspect_warp("],
+    [
+        "    /// Runs Classic Mutation, Vector Stretch, or a dedicated vector effect with appearance options.",
+        "    /// kind: 0 = classic, 1 = stretch, 2 = dedicated effect; mode 0-10 is used for kind 2.",
+        "    pub fn mutate_vector_runtime_with_options(",
+        "        &mut self, kind: u8, mode: u8, intensity: u8, seed: u32,",
+        "        corrupt_colors: bool, cartoonize: bool, cartoon_strength: u8,",
+        "    ) -> u32 {",
+        "        self.mutate_with_update_context(|context| {",
+        "            let mut characters = Vec::new();",
+        "            let movies = context.library.known_movies().collect::<Vec<_>>();",
+        "            for movie in movies {",
+        "                if let Some(movie_library) = context.library.library_for_movie(movie) {",
+        "                    characters.extend(movie_library.characters().values().copied());",
+        "                }",
+        "            }",
+        "            let mut seen = FnvHashSet::default();",
+        "            let mut seed = seed;",
+        "            let mut changed = 0;",
+        "            let intensity = intensity.clamp(1, 100);",
+        "            let kind = kind.min(2);",
+        "            for character in characters {",
+        "                match character {",
+        "                    Character::Graphic(graphic) => {",
+        "                        if seen.insert(graphic.mutation_key()) {",
+        "                            changed += graphic.mutate_with_appearance_options(context.gc(), &mut seed, intensity, kind, mode, corrupt_colors, cartoonize, cartoon_strength);",
+        "                        }",
+        "                    }",
+        "                    Character::MorphShape(morph) => {",
+        "                        if seen.insert(morph.mutation_key()) {",
+        "                            changed += morph.mutate_with_appearance_options(context.gc(), &mut seed, intensity, kind, mode, corrupt_colors, cartoonize, cartoon_strength);",
+        "                        }",
+        "                    }",
+        "                    _ => {}",
+        "                }",
+        "            }",
+        "            invalidate_vector_display_object(context.stage.into());",
+        "            if changed > 0 { *context.needs_render = true; }",
+        "            changed",
+        "        })",
+        "    }",
+        "",
+        "    pub fn mutate_sprite_aspect_warp("
+    ]);
+
+patch("web/src/lib.rs",
+    ["    pub fn mutate_sprite_aspect_warp(&self, intensity: u8, glitch_chance: u8, seed: u32) -> u32 {"],
+    [
+        "    /// Mutates live vector definitions with optional color preservation and cartoon styling.",
+        "    pub fn mutate_vector_runtime_with_options(",
+        "        &self, kind: u8, mode: u8, intensity: u8, seed: u32,",
+        "        corrupt_colors: bool, cartoonize: bool, cartoon_strength: u8,",
+        "    ) -> u32 {",
+        "        self.with_core_mut(|core| core.mutate_vector_runtime_with_options(kind, mode, intensity, seed, corrupt_colors, cartoonize, cartoon_strength)).unwrap_or_default()",
+        "    }",
+        "",
+        "    pub fn mutate_sprite_aspect_warp(&self, intensity: u8, glitch_chance: u8, seed: u32) -> u32 {"
+    ]);
+
+patch("web/packages/core/src/public/player/v1.ts",
+    ["    mutateSpriteAspectWarp(intensity: number, glitchChance: number, seed: number): number;"],
+    [
+        "    mutateSpriteAspectWarp(intensity: number, glitchChance: number, seed: number): number;",
+        "    /** Applies a vector mutation mode with optional color corruption and cartoon styling. */",
+        "    mutateVectorRuntimeWithOptions(kind: number, mode: number, intensity: number, seed: number, corruptColors: boolean, cartoonize: boolean, cartoonStrength: number): number;"
+    ]);
+
+patch("web/packages/core/src/internal/player/impl_v1.ts",
+    ["    mutateSpriteAspectWarp(intensity: number, glitchChance: number, seed: number): number {"],
+    [
+        "    mutateVectorRuntimeWithOptions(kind: number, mode: number, intensity: number, seed: number, corruptColors: boolean, cartoonize: boolean, cartoonStrength: number): number {",
+        "        return this.#inner.mutateVectorRuntimeWithOptions(kind, mode, intensity, seed, corruptColors, cartoonize, cartoonStrength);",
+        "    }",
+        "",
+        "    mutateSpriteAspectWarp(intensity: number, glitchChance: number, seed: number): number {"
+    ]);
+
+patch("web/packages/core/src/internal/player/inner.tsx",
+    ["    mutateSpriteAspectWarp(intensity: number, glitchChance: number, seed: number): number {"],
+    [
+        "    mutateVectorRuntimeWithOptions(kind: number, mode: number, intensity: number, seed: number, corruptColors: boolean, cartoonize: boolean, cartoonStrength: number): number {",
+        "        if (!this.instance) return 0;",
+        "        const safeKind = Math.max(0, Math.min(2, Math.round(kind)));",
+        "        const safeMode = Math.max(0, Math.min(10, Math.round(mode)));",
+        "        const safeIntensity = Math.max(1, Math.min(100, Math.round(intensity)));",
+        "        const safeCartoonStrength = Math.max(1, Math.min(100, Math.round(cartoonStrength)));",
+        "        return this.instance.mutate_vector_runtime_with_options(safeKind, safeMode, safeIntensity, seed >>> 0, Boolean(corruptColors), Boolean(cartoonize), safeCartoonStrength);",
+        "    }",
+        "",
+        "    mutateSpriteAspectWarp(intensity: number, glitchChance: number, seed: number): number {"
+    ]);
+
+
+console.log("Patched pinned Ruffle source for classic mutation, Vector Stretch, Sprite Aspect Warp, ten vector effects, and live appearance controls.");
 
