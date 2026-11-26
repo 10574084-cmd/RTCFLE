@@ -182,7 +182,7 @@
         </div>
         <div class="controls">
           <div class="control-group">
-            <div class="control-heading"><strong>SWF INTERNAL MUTATOR</strong><span class="tiny">PRE-PLAY</span></div>
+            <div class="control-heading"><strong>SWF ASSET + LIVE MUTATOR</strong><span class="tiny">PRE-PLAY / RUNTIME</span></div>
             <label class="toggle">Corrupt internal assets <input type="checkbox" id="assetCorrupt" checked></label>
             <div style="margin-top:12px">
               <label class="range-label" for="assetMode">Asset targets</label>
@@ -219,7 +219,7 @@
     </div>
 
     <div class="notice">
-      <b>Local processing:</b> RTCFLE applies supported asset mutations to a temporary SWF copy before playback. The source file is never uploaded or overwritten. Ruffle loads the movie once and keeps its timeline running; automatic live replacement is disabled until RTCFLE has a custom Ruffle runtime with an in-memory shape mutation hook. The custom RTCFLE Ruffle build is hosted with this page.
+      <b>Local processing:</b> The source file stays on your device and is never uploaded or overwritten. Pre-playback asset edits are applied to a temporary SWF copy. The custom Ruffle runtime can also mutate loaded Graphic and MorphShape vectors in memory while the timeline keeps running; live mutation does not reload the movie. The SWF export contains the pre-playback copy, not later in-memory live changes.
     </div>
     <footer>
       <span>RTCFLE // EXPERIMENTAL BUILD 0.1</span>
