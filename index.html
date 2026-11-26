@@ -1231,11 +1231,21 @@
         }
       }
       $("liveMutateButton").addEventListener("click", runLiveMutation);
-      document.addEventListener("keydown", (event) => {
-        if (event.key.toLowerCase() !== "l" || event.repeat || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
-        const target = event.target;
-        if (target instanceof Element && target.closest("input, textarea, select, [contenteditable='true'], [role='textbox']")) return;
-        if (!player || !currentFile) return;
+      function isTypingInTextControl(event) {
+        const path = typeof event.composedPath === "function" ? event.composedPath() : [event.target];
+        return path.some((node) => {
+          if (!(node instanceof Element)) return false;
+          if (node.isContentEditable || node.matches("textarea, select, [role='textbox']")) return true;
+          if (node instanceof HTMLInputElement) {
+            return /^(text|search|email|url|password|number|tel)$/i.test(node.type);
+          }
+          return false;
+        });
+      }
+      window.addEventListener("keydown", (event) => {
+        if ((event.code !== "KeyL" && (typeof event.key !== "string" || event.key.toLowerCase() !== "l")) ||
+            event.repeat || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
+        if (isTypingInTextControl(event) || !player || !currentFile) return;
         event.preventDefault();
         runLiveMutation();
       }, true);
