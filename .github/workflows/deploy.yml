@@ -2,7 +2,9 @@ name: Build custom Ruffle and deploy RTCFLE
 
 on:
   push:
-    branches: [main, ruffle-live-mutation]
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -80,4 +82,5 @@ jobs:
 
       - name: Deploy
         id: deployment
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/deploy-pages@v4
