@@ -14,7 +14,7 @@ RTCFLE is a browser-based SWF asset corruption tool powered by a custom-built Ru
 - Apply Sprite Aspect Warp to live display-list instances, scaling local X and Y matrix axes independently to create wide/tall sprite proportions, with optional flips, shear, offsets, and near-collapse glitches. It changes current instances rather than shared character definitions and never calls `load()` or `reload()`.
 - Choose ten additional live vector-only effects: Shatter Lines, Melt Geometry, Ripple Distortion, Mirror Flip, Pixel Grid, Spiral Twist, Outline Explosion, Gradient Storm, Ghost Contours, and Vector Chaos. The `ALL VECTOR EFFECTS` option runs all ten in one mutation pass.
 - Expand the SWF preview to browser fullscreen and exit fullscreen without leaving the page.
-- Configure live vector appearance per runtime mode: independently enable or disable random vector color corruption, or turn on a cartoon/cel-shaded look that posterizes fill and gradient colors and thickens outlines. A separate strength slider controls the cartoon treatment; these options are hidden for Sprite Aspect Warp because it changes instance transforms rather than vector styles.
+- Configure live vector appearance per runtime mode: independently enable or disable random vector color corruption, or turn on a cartoon/cel-shaded look that posterizes fill and gradient colors and thickens outlines. Additional stackable geometry/edge appearance options include Corner Fragmentation, Curve Warping, Edge Melting, Vertex Jitter, Contour Ghosting, Outline Breakup, Symmetry Tearing, and Pixel-Grid Edges. Each checked option applies its corresponding existing live vector-effect pass after the selected mode, with a separate extra-geometry strength slider. These options are hidden for Sprite Aspect Warp because it changes instance transforms rather than vector styles.
 - Optionally corrupt embedded SWF audio, with an independent off-by-default toggle, intensity slider, and selectable Hybrid, Bitcrush, Static, or Dropout glitch styles. The pre-playback pass handles DefineSound event-audio tags and supported SoundStreamBlock audio packets; MP3 frame headers, CRC fields, seek/sample prefixes, and SoundStreamBlock long tag headers are preserved.
 
 ## Custom Ruffle runtime
@@ -36,7 +36,7 @@ The UI maps its 1–1000 vector slider to the runtime's 1–100 live-mutation in
 
 ## Limitations
 
-- Live vector color preservation and cartoon styling are applied to vector definitions in memory. They affect Classic Mutation, Vector Stretch, and the ten dedicated vector effects; they are not available for Sprite Aspect Warp. Repeated live passes are cumulative, so reload the SWF to return to its original appearance.
+- Live vector color preservation, cartoon styling, and the extra geometry/edge appearance passes are applied to vector definitions in memory. They affect Classic Mutation, Vector Stretch, and the ten dedicated vector effects; they are not available for Sprite Aspect Warp. Repeated live passes are cumulative, so reload the SWF to return to its original appearance.
 
 - Audio corruption is optional and disabled by default. It edits supported audio bytes in a temporary SWF copy rather than applying a live DSP effect to the Ruffle audio output. MP3 frame headers and timing fields are preserved, but changing compressed audio data can produce artifacts or make an individual clip less decodable. Unsupported codecs or malformed packets may be left unchanged. ZWS/LZMA-compressed SWFs are still loaded without pre-playback edits.
 

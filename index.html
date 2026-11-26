@@ -266,6 +266,24 @@
                 <div><label class="range-label" for="cartoonStrength">Cartoon color flattening + outline strength</label><input type="range" id="cartoonStrength" min="1" max="100" value="60"></div>
                 <span class="range-value" id="cartoonStrengthValue">60%</span>
               </div>
+              <div style="margin-top:13px;padding-top:12px;border-top:1px solid #29394b">
+                <div class="control-heading"><strong>GEOMETRY / EDGE CORRUPTION</strong><span class="tiny">STACKABLE</span></div>
+                <div class="toggles">
+                  <label class="toggle">Corner fragmentation <input type="checkbox" class="vectorDamage" data-effect="0"></label>
+                  <label class="toggle">Curve warping <input type="checkbox" class="vectorDamage" data-effect="2"></label>
+                  <label class="toggle">Edge melting <input type="checkbox" class="vectorDamage" data-effect="1"></label>
+                  <label class="toggle">Vertex jitter <input type="checkbox" class="vectorDamage" data-effect="9"></label>
+                  <label class="toggle">Contour ghosting <input type="checkbox" class="vectorDamage" data-effect="8"></label>
+                  <label class="toggle">Outline breakup <input type="checkbox" class="vectorDamage" data-effect="6"></label>
+                  <label class="toggle">Symmetry tearing <input type="checkbox" class="vectorDamage" data-effect="3"></label>
+                  <label class="toggle">Pixel-grid edges <input type="checkbox" class="vectorDamage" data-effect="4"></label>
+                </div>
+                <div class="range-row" style="margin-bottom:0">
+                  <div><label class="range-label" for="vectorDamageStrength">Extra geometry corruption strength</label><input type="range" id="vectorDamageStrength" min="1" max="100" value="45"></div>
+                  <span class="range-value" id="vectorDamageStrengthValue">45%</span>
+                </div>
+                <p class="tiny" style="margin:8px 0 0;line-height:1.5">Each checked option adds its corresponding live vector effect after the selected runtime mode. Options can be combined.</p>
+              </div>
               <p id="vectorAppearanceHint" class="tiny" style="margin:9px 0 0;line-height:1.5">Choose whether live vector colors can change. Cartoon mode reduces color levels and makes outlines bolder.</p>
             </div>
             <div id="aspectWarpSettings" class="hidden" style="margin-top:12px;padding:11px;border:1px solid #29394b;border-radius:9px;background:rgba(255,255,255,.02)">
@@ -1188,12 +1206,22 @@
             changed = player.ruffle().mutateVectorRuntimeWithOptions(
               kind, effectMode, intensity, seed[0], corruptColors, cartoonize, cartoonStrength
             );
+            const damageIntensity = Math.max(1, Math.min(100, Number($("vectorDamageStrength").value)));
+            const damageOptions = Array.from(document.querySelectorAll(".vectorDamage:checked"));
+            for (let i = 0; i < damageOptions.length; i++) {
+              const damageMode = Number(damageOptions[i].dataset.effect);
+              const damageSeed = (seed[0] + 0x9e3779b9 * (i + 1)) >>> 0;
+              changed += player.ruffle().mutateVectorRuntimeWithOptions(
+                2, damageMode, damageIntensity, damageSeed, corruptColors, false, cartoonStrength
+              );
+            }
             modeName = mode === "stretch" ? "VECTOR STRETCH" : (isVectorEffect
               ? (effectMode === 10 ? "ALL VECTOR EFFECTS" : $("liveMode").selectedOptions[0].text.toUpperCase())
               : "CLASSIC MUTATION");
           }
           const appearanceSummary = mode === "aspect" ? "" :
-            " · colors " + (corruptColors ? "ON" : "OFF") + " · cartoon " + (cartoonize ? "ON" : "OFF");
+            " · colors " + (corruptColors ? "ON" : "OFF") + " · cartoon " + (cartoonize ? "ON" : "OFF") +
+            " · extra geometry effects " + document.querySelectorAll(".vectorDamage:checked").length;
           $("liveCorruptStatus").textContent = "LIVE · " + modeName + ": " + changed + " live instances/fields changed" + appearanceSummary + ". The movie was not reloaded.";
           setStatus(modeName + ": " + changed + " LIVE CHANGES");
         } catch (error) {
@@ -1275,6 +1303,9 @@
       $("liveCartoonLook").addEventListener("change", updateLiveModeSettings);
       $("cartoonStrength").addEventListener("input", () => {
         $("cartoonStrengthValue").textContent = $("cartoonStrength").value + "%";
+      });
+      $("vectorDamageStrength").addEventListener("input", () => {
+        $("vectorDamageStrengthValue").textContent = $("vectorDamageStrength").value + "%";
       });
       updateLiveModeSettings();
       $("assetCorrupt").addEventListener("change", () => {
