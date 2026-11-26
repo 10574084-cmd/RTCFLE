@@ -369,4 +369,16 @@ patch("core/src/display_object/graphic.rs",
         "                return ruffle_render::shape_utils::shape_hit_test(&*shape, point, &local_matrix);"
     ]);
 
+
+patch("core/src/display_object/graphic.rs",
+    [
+        "                let shape = self.0.shared.get().shape.borrow();",
+        "                return ruffle_render::shape_utils::shape_hit_test(&*shape, point, &local_matrix);"
+    ],
+    [
+        "                let shared = self.0.shared.get();",
+        "                let shape = shared.shape.borrow();",
+        "                return ruffle_render::shape_utils::shape_hit_test(&*shape, point, &local_matrix);"
+    ]);
+
 console.log("Patched pinned Ruffle source for live in-place vector mutation.");
