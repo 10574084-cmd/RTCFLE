@@ -785,3 +785,291 @@ pub(crate) fn mutate_vector_effect_morph_shape(shape: &mut swf::MorphShape, seed
     }
     changed
 }
+
+
+// Optional live appearance controls shared by Classic Mutation, Vector Stretch,
+// and the ten dedicated vector effects. The base corruption passes remain intact;
+// when color corruption is off, only color channels are restored from a snapshot.
+// Cartoon mode then posterizes fills and adds heavier vector outlines.
+
+fn restore_color_channels(source: &swf::Color, target: &mut swf::Color) {
+    target.r = source.r;
+    target.g = source.g;
+    target.b = source.b;
+    target.a = source.a;
+}
+
+fn restore_gradient_colors(source: &Gradient, target: &mut Gradient) {
+    for (old_stop, new_stop) in source.records.iter().zip(target.records.iter_mut()) {
+        restore_color_channels(&old_stop.color, &mut new_stop.color);
+    }
+}
+
+fn restore_fill_colors(source: &FillStyle, target: &mut FillStyle) {
+    match (source, target) {
+        (FillStyle::Color(old), FillStyle::Color(new)) => restore_color_channels(old, new),
+        (FillStyle::LinearGradient(old), FillStyle::LinearGradient(new))
+        | (FillStyle::RadialGradient(old), FillStyle::RadialGradient(new)) => {
+            restore_gradient_colors(old, new);
+        }
+        (FillStyle::FocalGradient { gradient: old, .. }, FillStyle::FocalGradient { gradient: new, .. }) => {
+            restore_gradient_colors(old, new);
+        }
+        _ => {}
+    }
+}
+
+fn restore_style_colors(
+    old_fills: &[FillStyle],
+    old_lines: &[LineStyle],
+    new_fills: &mut [FillStyle],
+    new_lines: &mut [LineStyle],
+) {
+    for (old, new) in old_fills.iter().zip(new_fills.iter_mut()) {
+        restore_fill_colors(old, new);
+    }
+    for (old, new) in old_lines.iter().zip(new_lines.iter_mut()) {
+        let mut new_fill = new.fill_style().clone();
+        restore_fill_colors(old.fill_style(), &mut new_fill);
+        *new = new.clone().with_fill_style(new_fill);
+    }
+}
+
+fn restore_record_colors(old_records: &[ShapeRecord], new_records: &mut [ShapeRecord]) {
+    for (old, new) in old_records.iter().zip(new_records.iter_mut()) {
+        if let (
+            ShapeRecord::StyleChange(old_change),
+            ShapeRecord::StyleChange(new_change),
+        ) = (old, new) {
+            if let (Some(old_styles), Some(new_styles)) =
+                (&old_change.new_styles, &mut new_change.new_styles)
+            {
+                restore_style_colors(
+                    &old_styles.fill_styles,
+                    &old_styles.line_styles,
+                    &mut new_styles.fill_styles,
+                    &mut new_styles.line_styles,
+                );
+            }
+        }
+    }
+}
+
+fn cartoon_channel(value: u8, strength: u8, outline: bool) -> u8 {
+    let value = if outline { (u16::from(value) * 62 / 100) as u8 } else { value };
+    let levels = 3u16 + (u16::from(strength.min(100)) * 5 / 100);
+    let intervals = levels - 1;
+    let quantized = ((u16::from(value) * intervals + 127) / 255) * 255 / intervals;
+    quantized.min(255) as u8
+}
+
+fn cartoonize_color(color: &mut swf::Color, strength: u8, outline: bool) -> u32 {
+    let old = (color.r, color.g, color.b);
+    color.r = cartoon_channel(color.r, strength, outline);
+    color.g = cartoon_channel(color.g, strength, outline);
+    color.b = cartoon_channel(color.b, strength, outline);
+    u32::from(old != (color.r, color.g, color.b))
+}
+
+fn cartoonize_fill(fill: &mut FillStyle, strength: u8, outline: bool) -> u32 {
+    match fill {
+        FillStyle::Color(color) => cartoonize_color(color, strength, outline),
+        FillStyle::LinearGradient(gradient)
+        | FillStyle::RadialGradient(gradient)
+        | FillStyle::FocalGradient { gradient, .. } => {
+            let mut changed = 0;
+            for stop in &mut gradient.records {
+                changed += cartoonize_color(&mut stop.color, strength, outline);
+            }
+            changed
+        }
+        FillStyle::Bitmap { .. } => 0,
+    }
+}
+
+fn cartoonize_style_lists(
+    fills: &mut [FillStyle],
+    lines: &mut [LineStyle],
+    strength: u8,
+) -> u32 {
+    let mut changed = 0;
+    for fill in fills {
+        changed += cartoonize_fill(fill, strength, false);
+    }
+    let width_percent = 110 + u16::from(strength.min(100)) / 2;
+    for line in lines {
+        let old_width = line.width().get();
+        let new_width = (i64::from(old_width) * i64::from(width_percent) / 100)
+            .clamp(0, 65_535) as i32;
+        if new_width != old_width {
+            *line = line.clone().with_width(Twips::new(new_width));
+            changed += 1;
+        }
+        let mut fill = line.fill_style().clone();
+        let fill_changed = cartoonize_fill(&mut fill, strength, true);
+        if fill_changed > 0 {
+            *line = line.clone().with_fill_style(fill);
+            changed += fill_changed;
+        }
+    }
+    changed
+}
+
+fn cartoonize_records(records: &mut [ShapeRecord], strength: u8) -> u32 {
+    let mut changed = 0;
+    for record in records {
+        if let ShapeRecord::StyleChange(change) = record {
+            if let Some(styles) = &mut change.new_styles {
+                changed += cartoonize_style_lists(
+                    &mut styles.fill_styles,
+                    &mut styles.line_styles,
+                    strength,
+                );
+            }
+        }
+    }
+    changed
+}
+
+fn cartoonize_shape(shape: &mut swf::Shape, strength: u8) -> u32 {
+    cartoonize_style_lists(
+        &mut shape.styles.fill_styles,
+        &mut shape.styles.line_styles,
+        strength,
+    ) + cartoonize_records(&mut shape.shape, strength)
+}
+
+fn cartoonize_morph_shape(shape: &mut swf::MorphShape, strength: u8) -> u32 {
+    cartoonize_style_lists(&mut shape.fill_styles, &mut shape.line_styles, strength)
+        + cartoonize_records(&mut shape.shape, strength)
+}
+
+fn apply_shape_appearance_options(
+    before: Option<&swf::Shape>,
+    shape: &mut swf::Shape,
+    cartoonize: bool,
+    cartoon_strength: u8,
+) -> u32 {
+    let mut changed = 0;
+    if let Some(original) = before {
+        restore_style_colors(
+            &original.styles.fill_styles,
+            &original.styles.line_styles,
+            &mut shape.styles.fill_styles,
+            &mut shape.styles.line_styles,
+        );
+        restore_record_colors(&original.shape, &mut shape.shape);
+    }
+    if cartoonize {
+        changed += cartoonize_shape(shape, cartoon_strength);
+    }
+    changed
+}
+
+fn apply_morph_appearance_options(
+    before: Option<&swf::MorphShape>,
+    shape: &mut swf::MorphShape,
+    cartoonize: bool,
+    cartoon_strength: u8,
+) -> u32 {
+    let mut changed = 0;
+    if let Some(original) = before {
+        restore_style_colors(
+            &original.fill_styles,
+            &original.line_styles,
+            &mut shape.fill_styles,
+            &mut shape.line_styles,
+        );
+        restore_record_colors(&original.shape, &mut shape.shape);
+    }
+    if cartoonize {
+        changed += cartoonize_morph_shape(shape, cartoon_strength);
+    }
+    changed
+}
+
+pub(crate) fn mutate_shape_with_options(
+    shape: &mut swf::Shape,
+    seed: &mut u32,
+    intensity: u8,
+    corrupt_colors: bool,
+    cartoonize: bool,
+    cartoon_strength: u8,
+) -> u32 {
+    let before = if corrupt_colors { None } else { Some(shape.clone()) };
+    let mut changed = mutate_shape(shape, seed, intensity);
+    changed += apply_shape_appearance_options(before.as_ref(), shape, cartoonize, cartoon_strength);
+    changed
+}
+
+pub(crate) fn mutate_morph_shape_with_options(
+    shape: &mut swf::MorphShape,
+    seed: &mut u32,
+    intensity: u8,
+    corrupt_colors: bool,
+    cartoonize: bool,
+    cartoon_strength: u8,
+) -> u32 {
+    let before = if corrupt_colors { None } else { Some(shape.clone()) };
+    let mut changed = mutate_morph_shape(shape, seed, intensity);
+    changed += apply_morph_appearance_options(before.as_ref(), shape, cartoonize, cartoon_strength);
+    changed
+}
+
+pub(crate) fn mutate_stretch_shape_with_options(
+    shape: &mut swf::Shape,
+    seed: &mut u32,
+    intensity: u8,
+    corrupt_colors: bool,
+    cartoonize: bool,
+    cartoon_strength: u8,
+) -> u32 {
+    let before = if corrupt_colors { None } else { Some(shape.clone()) };
+    let mut changed = mutate_stretch_shape(shape, seed, intensity);
+    changed += apply_shape_appearance_options(before.as_ref(), shape, cartoonize, cartoon_strength);
+    changed
+}
+
+pub(crate) fn mutate_stretch_morph_shape_with_options(
+    shape: &mut swf::MorphShape,
+    seed: &mut u32,
+    intensity: u8,
+    corrupt_colors: bool,
+    cartoonize: bool,
+    cartoon_strength: u8,
+) -> u32 {
+    let before = if corrupt_colors { None } else { Some(shape.clone()) };
+    let mut changed = mutate_stretch_morph_shape(shape, seed, intensity);
+    changed += apply_morph_appearance_options(before.as_ref(), shape, cartoonize, cartoon_strength);
+    changed
+}
+
+pub(crate) fn mutate_vector_effect_shape_with_options(
+    shape: &mut swf::Shape,
+    seed: &mut u32,
+    intensity: u8,
+    mode: u8,
+    corrupt_colors: bool,
+    cartoonize: bool,
+    cartoon_strength: u8,
+) -> u32 {
+    let before = if corrupt_colors { None } else { Some(shape.clone()) };
+    let mut changed = mutate_vector_effect_shape(shape, seed, intensity, mode);
+    changed += apply_shape_appearance_options(before.as_ref(), shape, cartoonize, cartoon_strength);
+    changed
+}
+
+pub(crate) fn mutate_vector_effect_morph_shape_with_options(
+    shape: &mut swf::MorphShape,
+    seed: &mut u32,
+    intensity: u8,
+    mode: u8,
+    corrupt_colors: bool,
+    cartoonize: bool,
+    cartoon_strength: u8,
+) -> u32 {
+    let before = if corrupt_colors { None } else { Some(shape.clone()) };
+    let mut changed = mutate_vector_effect_morph_shape(shape, seed, intensity, mode);
+    changed += apply_morph_appearance_options(before.as_ref(), shape, cartoonize, cartoon_strength);
+    changed
+}
