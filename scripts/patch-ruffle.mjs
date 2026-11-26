@@ -381,4 +381,185 @@ patch("core/src/display_object/graphic.rs",
         "                return ruffle_render::shape_utils::shape_hit_test(&*shape, point, &local_matrix);"
     ]);
 
-console.log("Patched pinned Ruffle source for live in-place vector mutation.");
+
+
+// Separate high-amplitude vector stretching path; the classic mutation API stays intact.
+patch("core/src/display_object/graphic.rs",
+    [
+        "    }",
+        "",
+        "    pub(crate) fn invalidate_vector_mutation_cache(self) {",
+        "        self.invalidate_cached_bitmap();",
+        "    }"
+    ],
+    [
+        "    }",
+        "",
+        "    pub(crate) fn mutate_stretch_vectors(",
+        "        self,",
+        "        mc: &Mutation<'gc>,",
+        "        seed: &mut u32,",
+        "        intensity: u8,",
+        "    ) -> u32 {",
+        "        let changed = {",
+        "            let mut shape = unlock!(Gc::write(mc, self.0.shared.get()), GraphicShared, shape).borrow_mut();",
+        "            crate::vector_mutation::mutate_stretch_shape(&mut shape, seed, intensity)",
+        "        };",
+        "        if changed > 0 {",
+        "            self.0.shared.get().scaled_handle.borrow_mut().clear();",
+        "        }",
+        "        changed",
+        "    }",
+        "",
+        "    pub(crate) fn invalidate_vector_mutation_cache(self) {",
+        "        self.invalidate_cached_bitmap();",
+        "    }"
+    ]);
+
+patch("core/src/display_object/morph_shape.rs",
+    [
+        "    }",
+        "",
+        "    pub(crate) fn invalidate_vector_mutation_cache(self) {",
+        "        self.invalidate_cached_bitmap();",
+        "    }"
+    ],
+    [
+        "    }",
+        "",
+        "    pub(crate) fn mutate_stretch_vectors(",
+        "        self,",
+        "        mc: &Mutation<'gc>,",
+        "        seed: &mut u32,",
+        "        intensity: u8,",
+        "    ) -> u32 {",
+        "        let mut changed = {",
+        "            let mut start = unlock!(Gc::write(mc, self.0.shared.get()), MorphShapeShared, start).borrow_mut();",
+        "            crate::vector_mutation::mutate_stretch_morph_shape(&mut start, seed, intensity)",
+        "        };",
+        "        changed += {",
+        "            let mut end = unlock!(Gc::write(mc, self.0.shared.get()), MorphShapeShared, end).borrow_mut();",
+        "            crate::vector_mutation::mutate_stretch_morph_shape(&mut end, seed, intensity)",
+        "        };",
+        "        if changed > 0 {",
+        "            self.0.shared.get().frames.borrow_mut().clear();",
+        "        }",
+        "        changed",
+        "    }",
+        "",
+        "    pub(crate) fn invalidate_vector_mutation_cache(self) {",
+        "        self.invalidate_cached_bitmap();",
+        "    }"
+    ]);
+
+patch("core/src/player.rs",
+    ["    pub fn mutate_with_update_context<F, R>(&mut self, f: F) -> R"],
+    [
+        "    /// Applies high-amplitude vector stretching to loaded shapes without restarting the movie.",
+        "    pub fn mutate_vector_stretch(&mut self, intensity: u8, seed: u32) -> u32 {",
+        "        self.mutate_with_update_context(|context| {",
+        "            let mut characters = Vec::new();",
+        "            let movies = context.library.known_movies().collect::<Vec<_>>();",
+        "            for movie in movies {",
+        "                if let Some(movie_library) = context.library.library_for_movie(movie) {",
+        "                    characters.extend(movie_library.characters().values().copied());",
+        "                }",
+        "            }",
+        "            let mut seen = FnvHashSet::default();",
+        "            let mut seed = seed;",
+        "            let mut changed = 0;",
+        "            let intensity = intensity.clamp(1, 100);",
+        "            for character in characters {",
+        "                match character {",
+        "                    Character::Graphic(graphic) => {",
+        "                        if seen.insert(graphic.mutation_key()) {",
+        "                            changed += graphic.mutate_stretch_vectors(context.gc(), &mut seed, intensity);",
+        "                        }",
+        "                    }",
+        "                    Character::MorphShape(morph) => {",
+        "                        if seen.insert(morph.mutation_key()) {",
+        "                            changed += morph.mutate_stretch_vectors(context.gc(), &mut seed, intensity);",
+        "                        }",
+        "                    }",
+        "                    _ => {}",
+        "                }",
+        "            }",
+        "            invalidate_vector_display_object(context.stage.into());",
+        "            if changed > 0 {",
+        "                *context.needs_render = true;",
+        "            }",
+        "            changed",
+        "        })",
+        "    }",
+        "",
+        "    pub fn mutate_with_update_context<F, R>(&mut self, f: F) -> R"
+    ]);
+
+patch("web/src/lib.rs",
+    [
+        "    pub fn mutate_vector_shapes(&self, intensity: u8, seed: u32) -> u32 {",
+        "        self.with_core_mut(|core| core.mutate_vector_shapes(intensity, seed))",
+        "            .unwrap_or_default()",
+        "    }"
+    ],
+    [
+        "    pub fn mutate_vector_shapes(&self, intensity: u8, seed: u32) -> u32 {",
+        "        self.with_core_mut(|core| core.mutate_vector_shapes(intensity, seed))",
+        "            .unwrap_or_default()",
+        "    }",
+        "",
+        "    /// Applies in-place high-amplitude vector stretching to the live movie.",
+        "    pub fn mutate_vector_stretch(&self, intensity: u8, seed: u32) -> u32 {",
+        "        self.with_core_mut(|core| core.mutate_vector_stretch(intensity, seed))",
+        "            .unwrap_or_default()",
+        "    }"
+    ]);
+
+patch("web/packages/core/src/public/player/v1.ts",
+    ["    mutateVectorShapes(intensity: number, seed: number): number;"],
+    [
+        "    mutateVectorShapes(intensity: number, seed: number): number;",
+        "    /** Applies high-amplitude vector stretching without reloading the movie. */",
+        "    mutateVectorStretch(intensity: number, seed: number): number;"
+    ]);
+
+patch("web/packages/core/src/internal/player/impl_v1.ts",
+    [
+        "    mutateVectorShapes(intensity: number, seed: number): number {",
+        "        return this.#inner.mutateVectorShapes(intensity, seed);",
+        "    }"
+    ],
+    [
+        "    mutateVectorShapes(intensity: number, seed: number): number {",
+        "        return this.#inner.mutateVectorShapes(intensity, seed);",
+        "    }",
+        "",
+        "    mutateVectorStretch(intensity: number, seed: number): number {",
+        "        return this.#inner.mutateVectorStretch(intensity, seed);",
+        "    }"
+    ]);
+
+patch("web/packages/core/src/internal/player/inner.tsx",
+    [
+        "    mutateVectorShapes(intensity: number, seed: number): number {",
+        "        if (!this.instance) return 0;",
+        "        const safeIntensity = Math.max(1, Math.min(100, Math.round(intensity)));",
+        "        return this.instance.mutate_vector_shapes(safeIntensity, seed >>> 0);",
+        "    }"
+    ],
+    [
+        "    mutateVectorShapes(intensity: number, seed: number): number {",
+        "        if (!this.instance) return 0;",
+        "        const safeIntensity = Math.max(1, Math.min(100, Math.round(intensity)));",
+        "        return this.instance.mutate_vector_shapes(safeIntensity, seed >>> 0);",
+        "    }",
+        "",
+        "    mutateVectorStretch(intensity: number, seed: number): number {",
+        "        if (!this.instance) return 0;",
+        "        const safeIntensity = Math.max(1, Math.min(100, Math.round(intensity)));",
+        "        return this.instance.mutate_vector_stretch(safeIntensity, seed >>> 0);",
+        "    }"
+    ]);
+
+
+console.log("Patched pinned Ruffle source for classic mutation and live Vector Stretch.");

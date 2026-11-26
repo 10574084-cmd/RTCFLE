@@ -185,6 +185,13 @@
             <div class="control-heading"><strong>SWF ASSET + LIVE MUTATOR</strong><span class="tiny">PRE-PLAY / RUNTIME</span></div>
             <label class="toggle">Corrupt internal assets <input type="checkbox" id="assetCorrupt" checked></label>
             <div style="margin-top:12px">
+              <label class="range-label" for="vectorMode">Vector corruption mode</label>
+              <select id="vectorMode" style="width:100%;padding:9px;border-radius:8px;background:#111c29;color:#dce8f6;border:1px solid #34465a">
+                <option value="classic">Classic Mutation</option>
+                <option value="stretch">Vector Stretch</option>
+              </select>
+            </div>
+            <div style="margin-top:12px">
               <label class="range-label" for="assetMode">Asset targets</label>
               <select id="assetMode" style="width:100%;padding:9px;border-radius:8px;background:#111c29;color:#dce8f6;border:1px solid #34465a">
                 <option value="both">Vectors + images</option>
@@ -193,10 +200,10 @@
               </select>
             </div>
             <div class="range-row" style="margin-top:13px">
-              <div><label class="range-label" for="vectorStrength">Vector corruption level</label><input type="range" id="vectorStrength" min="1" max="1000" value="100"></div>
+              <div><label class="range-label" for="vectorStrength">Vector / stretch strength</label><input type="range" id="vectorStrength" min="1" max="1000" value="100"></div>
               <span class="range-value" id="vectorStrengthValue">100 / 1000</span>
             </div>
-            <p class="tiny" style="margin:-3px 0 13px;line-height:1.5">1000 = EXTREME · moves points, bends edges, scrambles fills, gradients, transforms and line widths.</p>
+            <p class="tiny" style="margin:-3px 0 13px;line-height:1.5">Classic shifts points and fills. Vector Stretch amplifies selected edge segments, warps bitmap fills, glitches colors and can hide selected fills or lines.</p>
             <div class="range-row">
               <div><label class="range-label" for="assetStrength">Bitmap corruption strength</label><input type="range" id="assetStrength" min="5" max="100" value="65"></div>
               <span class="range-value" id="assetStrengthValue">65%</span>
@@ -256,7 +263,7 @@
 
       const rufflePromise = new Promise((resolve, reject) => {
         const script = document.createElement("script");
-        script.src = "ruffle/ruffle.js";
+        script.src = "ruffle/ruffle.js?v=vector-stretch-1";
         script.async = true;
         script.onload = () => {
           ruffleReady = true;
@@ -407,31 +414,36 @@
           if (hasScale) {
             const n = this.readBits(5);
             if (strength > 0 && n > 0) {
-              this.distortMatrixValue(n, strength, stats);
-              this.distortMatrixValue(n, strength, stats);
+              this.distortMatrixValue(n, strength, stats, settings.vectorMode === "stretch");
+              this.distortMatrixValue(n, strength, stats, settings.vectorMode === "stretch");
             } else { this.readSigned(n); this.readSigned(n); }
           }
           const hasRotate = this.readBits(1);
           if (hasRotate) {
             const n = this.readBits(5);
             if (strength > 0 && n > 0) {
-              this.distortMatrixValue(n, strength, stats);
-              this.distortMatrixValue(n, strength, stats);
+              this.distortMatrixValue(n, strength, stats, settings.vectorMode === "stretch");
+              this.distortMatrixValue(n, strength, stats, settings.vectorMode === "stretch");
             } else { this.readSigned(n); this.readSigned(n); }
           }
           const n = this.readBits(5);
           if (strength > 0 && n > 0) {
-            this.distortSigned(n, strength * 1.5, stats, "vectorMatrices");
-            this.distortSigned(n, strength * 1.5, stats, "vectorMatrices");
+            this.mutateVectorDelta(n, strength * 1.5, stats, "vectorMatrices", settings.vectorMode);
+            this.mutateVectorDelta(n, strength * 1.5, stats, "vectorMatrices", settings.vectorMode);
           } else { this.readSigned(n); this.readSigned(n); }
           this.align();
         }
-        distortMatrixValue(count, strength, stats) {
+        distortMatrixValue(count, strength, stats, stretch = false) {
           const oldValue = this.readSigned(count);
-          const chaos = Math.min(10, strength);
-          const factor = 1 + (Math.random() * 2 - 1) * chaos * 0.9;
-          const offset = (Math.random() * 2 - 1) * Math.pow(2, Math.max(0, count - 2)) * Math.min(0.8, chaos * 0.08);
-          this.writeSigned(count, oldValue * factor + offset);
+          if (stretch) {
+            const factor = Math.random() < 0.12 ? 0 : 2 + Math.random() * Math.min(5, strength * 0.65);
+            this.writeSigned(count, oldValue * factor);
+          } else {
+            const chaos = Math.min(10, strength);
+            const factor = 1 + (Math.random() * 2 - 1) * chaos * 0.9;
+            const offset = (Math.random() * 2 - 1) * Math.pow(2, Math.max(0, count - 2)) * Math.min(0.8, chaos * 0.08);
+            this.writeSigned(count, oldValue * factor + offset);
+          }
           stats.vectorMatrices++;
         }
         distortSigned(count, strength, stats, counter = "vectorEdges") {
@@ -442,6 +454,22 @@
           this.writeSigned(count, oldValue * scale + offset);
           stats[counter]++;
         }
+        stretchSigned(count, strength, stats, counter = "vectorEdges") {
+          const oldValue = this.readSigned(count);
+          const chance = Math.min(0.92, 0.24 + Math.min(10, strength) * 0.068);
+          if (Math.random() < chance) {
+            const factor = Math.random() < 0.12 ? 0 : 2 + Math.random() * Math.min(6, strength * 0.58);
+            const offset = (Math.random() * 2 - 1) * Math.min(12000, strength * 820);
+            this.writeSigned(count, oldValue * factor + offset);
+            stats[counter]++;
+          } else {
+            this.writeSigned(count, oldValue);
+          }
+        }
+        mutateVectorDelta(count, strength, stats, counter = "vectorEdges", mode = "classic") {
+          if (mode === "stretch") this.stretchSigned(count, strength, stats, counter);
+          else this.distortSigned(count, strength, stats, counter);
+        }
         mutateGradientRatio(settings, stats) {
           const oldValue = this.readU8();
           const spread = 255 * Math.min(1, settings.strength);
@@ -449,12 +477,17 @@
           this.writeU8(oldValue + (Math.random() * 2 - 1) * spread * (1 + chaos * 0.8));
           stats.vectorGradientStops++;
         }
-        mutateLineWidth(strength, stats) {
+        mutateLineWidth(strength, stats, stretch = false) {
           const oldValue = this.readU16();
-          const chaos = Math.min(10, strength);
-          const factor = 1 + (Math.random() * 2 - 1) * chaos * 0.9;
-          const offset = (Math.random() * 2 - 1) * chaos * 1200;
-          this.writeU16(clampNumber(oldValue * factor + offset, 0, 65535));
+          if (stretch) {
+            const factor = Math.random() < 0.16 ? 0 : 2 + Math.random() * Math.min(5, strength * 0.6);
+            this.writeU16(clampNumber(oldValue * factor, 0, 65535));
+          } else {
+            const chaos = Math.min(10, strength);
+            const factor = 1 + (Math.random() * 2 - 1) * chaos * 0.9;
+            const offset = (Math.random() * 2 - 1) * chaos * 1200;
+            this.writeU16(clampNumber(oldValue * factor + offset, 0, 65535));
+          }
           stats.vectorLineWidths++;
         }
         mutateColor(alpha, settings, stats) {
@@ -462,7 +495,10 @@
           const pos = this.bit >> 3;
           const size = alpha ? 4 : 3;
           if (pos + size > this.data.length) throw new Error("Truncated SWF color");
-          corruptRgb(this.data, pos, alpha, settings.strength, settings.style, 255);
+          corruptRgb(this.data, pos, alpha, settings.strength, settings.vectorMode === "stretch" ? "hybrid" : settings.style, 255);
+          if (settings.vectorMode === "stretch" && alpha && Math.random() < Math.min(0.32, 0.07 + settings.strength * 0.022)) {
+            this.data[pos + 3] = 0;
+          }
           this.bit += size * 8;
           stats.vectorColors++;
         }
@@ -498,7 +534,7 @@
         if (lineCount === 255 && version >= 2) lineCount = cursor.readU16();
         if (lineCount > 4096) throw new Error("Too many SWF line styles");
         for (let i = 0; i < lineCount; i++) {
-          cursor.mutateLineWidth(settings.strength, stats);
+          cursor.mutateLineWidth(settings.strength, stats, settings.vectorMode === "stretch");
           if (version < 4) {
             cursor.mutateColor(version >= 3, settings, stats);
           } else {
@@ -560,8 +596,8 @@
               const moveChange = (flags & 1) !== 0;
               if (moveChange) {
                 const n = cursor.readBits(5);
-                cursor.distortSigned(n, settings.strength * 1.7, stats, "vectorMoves");
-                cursor.distortSigned(n, settings.strength * 1.7, stats, "vectorMoves");
+                cursor.mutateVectorDelta(n, settings.strength * 1.7, stats, "vectorMoves", settings.vectorMode);
+                cursor.mutateVectorDelta(n, settings.strength * 1.7, stats, "vectorMoves", settings.vectorMode);
               }
               if (fill0Change) cursor.readBits(fillBits);
               if (fill1Change) cursor.readBits(fillBits);
@@ -578,15 +614,15 @@
               if (straight) {
                 const general = cursor.readBits(1);
                 if (general) {
-                  cursor.distortSigned(n, settings.strength, stats);
-                  cursor.distortSigned(n, settings.strength, stats);
+                  cursor.mutateVectorDelta(n, settings.strength, stats, "vectorEdges", settings.vectorMode);
+                  cursor.mutateVectorDelta(n, settings.strength, stats, "vectorEdges", settings.vectorMode);
                 } else {
                   const vertical = cursor.readBits(1);
-                  if (vertical) cursor.distortSigned(n, settings.strength, stats);
-                  else cursor.distortSigned(n, settings.strength, stats);
+                  if (vertical) cursor.mutateVectorDelta(n, settings.strength, stats, "vectorEdges", settings.vectorMode);
+                  else cursor.mutateVectorDelta(n, settings.strength, stats, "vectorEdges", settings.vectorMode);
                 }
               } else {
-                for (let k = 0; k < 4; k++) cursor.distortSigned(n, settings.strength, stats);
+                for (let k = 0; k < 4; k++) cursor.mutateVectorDelta(n, settings.strength, stats, "vectorEdges", settings.vectorMode);
               }
             }
           }
@@ -606,6 +642,23 @@
           stats.vectorGradientStops = beforeStops;
           stats.vectorMatrices = beforeMatrices;
           return payload;
+        }
+      }
+
+      function smearRasterRows(raw, baseOffset, width, height, rowBytes, pixelBytes, strength) {
+        if (!width || !height || !pixelBytes) return;
+        const rowChance = Math.min(0.38, 0.05 + strength * 0.28);
+        for (let y = 0; y < height; y++) {
+          if (Math.random() >= rowChance || width < 4) continue;
+          const start = Math.floor(Math.random() * Math.max(1, width - 2));
+          const span = Math.min(width - start, Math.max(2, Math.floor(width * (0.08 + strength * 0.34))));
+          const sourceOffset = baseOffset + y * rowBytes + start * pixelBytes;
+          if (sourceOffset < 0 || sourceOffset + pixelBytes > raw.length) continue;
+          const sample = raw.slice(sourceOffset, sourceOffset + pixelBytes);
+          for (let x = start; x < start + span; x++) {
+            const dest = baseOffset + y * rowBytes + x * pixelBytes;
+            if (dest + pixelBytes <= raw.length) raw.set(sample, dest);
+          }
         }
       }
 
@@ -631,9 +684,12 @@
 
         if (format === 5) {
           for (let p = 0; p < width * height; p++) corruptRgb(raw, p * 4, true, settings.bitmapStrength, settings.style, 255, true);
+          if (settings.vectorMode === "stretch") smearRasterRows(raw, 0, width, height, width * 4, 4, settings.bitmapStrength);
         } else if (format === 3) {
           const colorBytes = tagCode === 36 ? 4 : 3;
+          const indexOffset = paletteSize * colorBytes;
           for (let p = 0; p < paletteSize; p++) corruptRgb(raw, p * colorBytes, tagCode === 36, settings.bitmapStrength, settings.style, 255, false);
+          if (settings.vectorMode === "stretch") smearRasterRows(raw, indexOffset, width, height, Math.ceil(width / 4) * 4, 1, settings.bitmapStrength);
         } else if (format === 4) {
           const rowBytes = Math.ceil((width * 2) / 4) * 4;
           for (let y = 0; y < height; y++) {
@@ -653,6 +709,7 @@
               raw[p] = changed & 255; raw[p + 1] = changed >> 8;
             }
           }
+          if (settings.vectorMode === "stretch") smearRasterRows(raw, 0, width, height, rowBytes, 2, settings.bitmapStrength);
         }
         const packed = await zlibTransform(raw, "deflate", 0);
         const head = payload.slice(0, compressedOffset);
@@ -706,6 +763,7 @@
           }
           const data = pixels.data;
           for (let p = 0; p < bitmap.width * bitmap.height; p++) corruptRgb(data, p * 4, true, settings.bitmapStrength, settings.style, 255, false);
+          if (settings.vectorMode === "stretch") smearRasterRows(data, 0, bitmap.width, bitmap.height, bitmap.width * 4, 4, settings.bitmapStrength);
           context.putImageData(pixels, 0, 0);
           const outputType = (tagCode === 21 && mime === "image/jpeg") ? "image/jpeg" : "image/png";
           const encoded = await canvasBlob(canvas, outputType);
@@ -778,6 +836,7 @@
         const mode = $("assetMode").value;
         const settings = {
           strength: vectorStrength,
+          vectorMode: $("vectorMode").value,
           bitmapStrength,
           style: $("assetStyle").value,
           vectors: mode === "both" || mode === "vectors",
@@ -845,7 +904,7 @@
             const result = await corruptSwfAssets(file);
             playbackBlob = result.blob;
             hasMutations = playbackBlob !== file;
-            $("assetReport").textContent = result.note + " · Vector: " + result.stats.vectorShapes + " shapes, " + result.stats.vectorEdges + " edges, " + result.stats.vectorMoves + " moved points, " + result.stats.vectorLineWidths + " line widths, " + result.stats.vectorGradientStops + " gradient stops, " + result.stats.vectorMatrices + " matrices, " + result.stats.vectorColors + " colors · Images: " + result.stats.bitmapImages;
+            $("assetReport").textContent = result.note + " · Mode: " + ($("vectorMode").value === "stretch" ? "Vector Stretch" : "Classic Mutation") + " · Vector: " + result.stats.vectorShapes + " shapes, " + result.stats.vectorEdges + " edges, " + result.stats.vectorMoves + " moved points, " + result.stats.vectorLineWidths + " line widths, " + result.stats.vectorGradientStops + " gradient stops, " + result.stats.vectorMatrices + " matrices, " + result.stats.vectorColors + " colors · Images: " + result.stats.bitmapImages;
           } else {
             $("assetReport").textContent = "Internal asset mutator disabled · original SWF selected.";
           }
@@ -922,12 +981,16 @@
           seed[0] = Math.floor(Math.random() * 0xFFFFFFFF);
         }
         try {
-          const changed = player.ruffle().mutateVectorShapes(intensity, seed[0]);
-          $("liveCorruptStatus").textContent = "MUTACIÓN EN VIVO: " + changed + " campos vectoriales cambiados · la película sigue reproduciéndose.";
-          setStatus("LIVE MUTATION: " + changed + " VECTOR FIELDS");
+          const mode = $("vectorMode").value;
+          const changed = mode === "stretch"
+            ? player.ruffle().mutateVectorStretch(intensity, seed[0])
+            : player.ruffle().mutateVectorShapes(intensity, seed[0]);
+          const modeName = mode === "stretch" ? "VECTOR STRETCH" : "CLASSIC MUTATION";
+          $("liveCorruptStatus").textContent = "MUTACIÓN EN VIVO · " + modeName + ": " + changed + " campos vectoriales modificados; el timeline sigue reproduciéndose.";
+          setStatus(modeName + ": " + changed + " VECTOR FIELDS");
         } catch (error) {
           console.error("RTCFLE live mutation failed:", error);
-          $("liveCorruptStatus").textContent = "MUTACIÓN EN VIVO: fallo al mutar las formas.";
+          $("liveCorruptStatus").textContent = "MUTACIÓN EN VIVO: fallo al mutar las formas. Comprueba que el bundle personalizado esté actualizado.";
           setStatus("LIVE MUTATION ERROR");
         }
       });
