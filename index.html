@@ -168,7 +168,7 @@
           <button class="btn" id="reloadButton" disabled>↻ Reload</button>
           <button class="btn pink" id="stopButton" disabled>■ Unload</button>
           <button class="btn" id="exportButton" disabled>↓ Export corrupted SWF</button>
-          <button class="btn" id="liveMutateButton" disabled>⌁ Mutate live</button>
+          <button class="btn" id="liveMutateButton" title="Keyboard shortcut: L" disabled>⌁ Mutate live [L]</button>
           <button class="btn" id="fullscreenButton" type="button">⛶ Fullscreen preview</button>
           <input type="file" id="fileInput" accept=".swf,application/x-shockwave-flash">
         </div>
@@ -1178,7 +1178,7 @@
       });
       $("reloadButton").addEventListener("click", () => { if (currentFile) loadFile(currentFile); });
       $("stopButton").addEventListener("click", unloadFile);
-      $("liveMutateButton").addEventListener("click", () => {
+      function runLiveMutation() {
         if (!player || !currentFile) return;
         const mode = $("liveMode").value;
         const isVectorEffect = mode.startsWith("vector-");
@@ -1229,7 +1229,16 @@
           $("liveCorruptStatus").textContent = "LIVE MUTATION FAILED. Make sure the latest custom Ruffle bundle is loaded.";
           setStatus("LIVE MUTATION ERROR");
         }
-      });
+      }
+      $("liveMutateButton").addEventListener("click", runLiveMutation);
+      document.addEventListener("keydown", (event) => {
+        if (event.key.toLowerCase() !== "l" || event.repeat || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
+        const target = event.target;
+        if (target instanceof Element && target.closest("input, textarea, select, [contenteditable='true'], [role='textbox']")) return;
+        if (!player || !currentFile) return;
+        event.preventDefault();
+        runLiveMutation();
+      }, true);
 
       $("fullscreenButton").addEventListener("click", async () => {
         try {
@@ -1289,7 +1298,7 @@
         $("aspectWarpSettings").classList.toggle("hidden", !isAspect);
         $("vectorAppearanceSettings").classList.toggle("hidden", !hasVectorAppearance);
         $("cartoonStrengthSettings").classList.toggle("hidden", !hasVectorAppearance || !$("liveCartoonLook").checked);
-        $("liveMutateButton").textContent = isAspect ? "↔ Aspect Warp" : (isVectorEffect ? "✦ Apply vector effect" : (mode === "stretch" ? "↗ Vector Stretch" : "⌁ Mutate live"));
+        $("liveMutateButton").textContent = (isAspect ? "↔ Aspect Warp" : (isVectorEffect ? "✦ Apply vector effect" : (mode === "stretch" ? "↗ Vector Stretch" : "⌁ Mutate live"))) + " [L]";
         $("vectorAppearanceHint").textContent = mode === "classic"
           ? "Classic Mutation: disable random fill, stroke and gradient color changes, or enable a flatter cartoon palette with bolder outlines."
           : (mode === "stretch"

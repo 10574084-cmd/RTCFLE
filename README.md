@@ -10,7 +10,7 @@ RTCFLE is a browser-based SWF asset corruption tool powered by a custom-built Ru
 - Corrupt supported bitmap assets with an independent strength control; Vector Stretch can smear selected bitmap scanlines.
 - Choose vector-only, image-only, or both asset targets.
 - Export the pre-playback-mutated SWF as a separate copy; the original file is not overwritten.
-- Mutate vector shapes inside the currently loaded Ruffle runtime while the movie keeps playing.
+- Mutate vector shapes inside the currently loaded Ruffle runtime while the movie keeps playing. Press `L` to trigger the same live corruption action as the button; the shortcut is ignored while typing in input, textarea, select, or editable text controls, or when Ctrl/Alt/Meta is held.
 - Apply Sprite Aspect Warp to live display-list instances, scaling local X and Y matrix axes independently to create wide/tall sprite proportions, with optional flips, shear, offsets, and near-collapse glitches. It changes current instances rather than shared character definitions and never calls `load()` or `reload()`.
 - Choose ten additional live vector-only effects: Shatter Lines, Melt Geometry, Ripple Distortion, Mirror Flip, Pixel Grid, Spiral Twist, Outline Explosion, Gradient Storm, Ghost Contours, and Vector Chaos. The `ALL VECTOR EFFECTS` option runs all ten in one mutation pass.
 - Expand the SWF preview to browser fullscreen and exit fullscreen without leaving the page.
