@@ -644,7 +644,7 @@
         if (raw.length < expected) return payload;
 
         if (format === 5) {
-          for (let p = 0; p < width * height; p++) corruptRgb(raw, p * 4, tagCode === 36, settings.strength, settings.style, 255, tagCode === 36);
+          for (let p = 0; p < width * height; p++) corruptRgb(raw, p * 4, true, settings.strength, settings.style, 255, true);
         } else if (format === 3) {
           const colorBytes = tagCode === 36 ? 4 : 3;
           for (let p = 0; p < paletteSize; p++) corruptRgb(raw, p * colorBytes, tagCode === 36, settings.strength, settings.style, 255, false);
