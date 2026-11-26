@@ -247,8 +247,29 @@ fn glitch_color(color: &mut swf::Color, seed: &mut u32, intensity: u8) -> u32 {
     1
 }
 
+fn stretch_fill_matrix(matrix: &mut swf::Matrix, seed: &mut u32) -> u32 {
+    let axis = next(seed) % 3;
+    let factor = if next(seed) % 9 == 0 {
+        0.18
+    } else {
+        0.45 + (next(seed) % 46) as f32 / 10.0
+    };
+    if axis != 1 {
+        matrix.a = swf::Fixed16::from_f32((matrix.a.to_f32() * factor).clamp(-32.0, 32.0));
+        matrix.b = swf::Fixed16::from_f32((matrix.b.to_f32() * factor).clamp(-32.0, 32.0));
+    }
+    if axis != 0 {
+        matrix.c = swf::Fixed16::from_f32((matrix.c.to_f32() * factor).clamp(-32.0, 32.0));
+        matrix.d = swf::Fixed16::from_f32((matrix.d.to_f32() * factor).clamp(-32.0, 32.0));
+    }
+    1
+}
+
 fn stretch_gradient(gradient: &mut Gradient, seed: &mut u32, intensity: u8) -> u32 {
     let mut changed = 0;
+    if should_change(seed, intensity) {
+        changed += stretch_fill_matrix(&mut gradient.matrix, seed);
+    }
     if should_change(seed, intensity) {
         let shift = offset(seed, intensity).saturating_mul(80);
         gradient.matrix.tx = Twips::new(gradient.matrix.tx.get().saturating_add(shift));
@@ -280,6 +301,9 @@ fn stretch_fill(fill: &mut FillStyle, seed: &mut u32, intensity: u8) -> u32 {
         }
         FillStyle::Bitmap { matrix, .. } => {
             let mut changed = 0;
+            if should_change(seed, intensity) {
+                changed += stretch_fill_matrix(matrix, seed);
+            }
             if should_change(seed, intensity) {
                 let shift = offset(seed, intensity).saturating_mul(180);
                 matrix.tx = Twips::new(matrix.tx.get().saturating_add(shift));
