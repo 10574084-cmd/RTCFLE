@@ -630,8 +630,10 @@ fn effect_styles(
                     | FillStyle::RadialGradient(gradient)
                     | FillStyle::FocalGradient { gradient, .. } => {
                         changed += stretch_gradient(gradient, seed, intensity);
-                        if gradient.records.len() > 1 && should_change(seed, intensity) {
-                            gradient.records.rotate_left((next(seed) as usize) % gradient.records.len());
+                        let stop_count = gradient.records.len();
+                        if stop_count > 1 && should_change(seed, intensity) {
+                            let shift = (next(seed) as usize) % stop_count;
+                            gradient.records.rotate_left(shift);
                             changed += 1;
                         }
                     }
