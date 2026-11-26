@@ -693,5 +693,140 @@ patch("web/packages/core/src/internal/player/inner.tsx",
     ]);
 
 
-console.log("Patched pinned Ruffle source for classic mutation, Vector Stretch, and Sprite Aspect Warp.");
+
+
+// Expose the ten vector corruption algorithms as one dedicated runtime API.
+patch("core/src/display_object/graphic.rs",
+    [
+        "    pub(crate) fn invalidate_vector_mutation_cache(self) {",
+        "        self.invalidate_cached_bitmap();",
+        "    }"
+    ],
+    [
+        "    pub(crate) fn mutate_vector_effects(",
+        "        self, mc: &Mutation<'gc>, seed: &mut u32, intensity: u8, mode: u8,",
+        "    ) -> u32 {",
+        "        let changed = {",
+        "            let mut shape = unlock!(Gc::write(mc, self.0.shared.get()), GraphicShared, shape).borrow_mut();",
+        "            crate::vector_mutation::mutate_vector_effect_shape(&mut shape, seed, intensity, mode)",
+        "        };",
+        "        if changed > 0 { self.0.shared.get().scaled_handle.borrow_mut().clear(); }",
+        "        changed",
+        "    }",
+        "",
+        "    pub(crate) fn invalidate_vector_mutation_cache(self) {",
+        "        self.invalidate_cached_bitmap();",
+        "    }"
+    ]);
+
+patch("core/src/display_object/morph_shape.rs",
+    [
+        "    pub(crate) fn invalidate_vector_mutation_cache(self) {",
+        "        self.invalidate_cached_bitmap();",
+        "    }"
+    ],
+    [
+        "    pub(crate) fn mutate_vector_effects(",
+        "        self, mc: &Mutation<'gc>, seed: &mut u32, intensity: u8, mode: u8,",
+        "    ) -> u32 {",
+        "        let mut changed = {",
+        "            let mut start = unlock!(Gc::write(mc, self.0.shared.get()), MorphShapeShared, start).borrow_mut();",
+        "            crate::vector_mutation::mutate_vector_effect_morph_shape(&mut start, seed, intensity, mode)",
+        "        };",
+        "        changed += {",
+        "            let mut end = unlock!(Gc::write(mc, self.0.shared.get()), MorphShapeShared, end).borrow_mut();",
+        "            crate::vector_mutation::mutate_vector_effect_morph_shape(&mut end, seed, intensity, mode)",
+        "        };",
+        "        if changed > 0 { self.0.shared.get().frames.borrow_mut().clear(); }",
+        "        changed",
+        "    }",
+        "",
+        "    pub(crate) fn invalidate_vector_mutation_cache(self) {",
+        "        self.invalidate_cached_bitmap();",
+        "    }"
+    ]);
+
+patch("core/src/player.rs",
+    ["    pub fn mutate_sprite_aspect_warp("],
+    [
+        "    /// Applies one of ten dedicated vector effects, or all ten when mode is 10.",
+        "    pub fn mutate_vector_effects(&mut self, mode: u8, intensity: u8, seed: u32) -> u32 {",
+        "        self.mutate_with_update_context(|context| {",
+        "            let mut characters = Vec::new();",
+        "            let movies = context.library.known_movies().collect::<Vec<_>>();",
+        "            for movie in movies {",
+        "                if let Some(movie_library) = context.library.library_for_movie(movie) {",
+        "                    characters.extend(movie_library.characters().values().copied());",
+        "                }",
+        "            }",
+        "            let mut seen = FnvHashSet::default();",
+        "            let mut seed = seed;",
+        "            let mut changed = 0;",
+        "            let intensity = intensity.clamp(1, 100);",
+        "            for character in characters {",
+        "                match character {",
+        "                    Character::Graphic(graphic) => {",
+        "                        if seen.insert(graphic.mutation_key()) {",
+        "                            changed += graphic.mutate_vector_effects(context.gc(), &mut seed, intensity, mode);",
+        "                        }",
+        "                    }",
+        "                    Character::MorphShape(morph) => {",
+        "                        if seen.insert(morph.mutation_key()) {",
+        "                            changed += morph.mutate_vector_effects(context.gc(), &mut seed, intensity, mode);",
+        "                        }",
+        "                    }",
+        "                    _ => {}",
+        "                }",
+        "            }",
+        "            invalidate_vector_display_object(context.stage.into());",
+        "            if changed > 0 { *context.needs_render = true; }",
+        "            changed",
+        "        })",
+        "    }",
+        "",
+        "    pub fn mutate_sprite_aspect_warp("
+    ]);
+
+patch("web/src/lib.rs",
+    ["    pub fn mutate_sprite_aspect_warp(&self, intensity: u8, glitch_chance: u8, seed: u32) -> u32 {"],
+    [
+        "    pub fn mutate_vector_effects(&self, mode: u8, intensity: u8, seed: u32) -> u32 {",
+        "        self.with_core_mut(|core| core.mutate_vector_effects(mode, intensity, seed)).unwrap_or_default()",
+        "    }",
+        "",
+        "    pub fn mutate_sprite_aspect_warp(&self, intensity: u8, glitch_chance: u8, seed: u32) -> u32 {"
+    ]);
+
+patch("web/packages/core/src/public/player/v1.ts",
+    ["    mutateSpriteAspectWarp(intensity: number, glitchChance: number, seed: number): number;"],
+    [
+        "    mutateSpriteAspectWarp(intensity: number, glitchChance: number, seed: number): number;",
+        "    /** Runs one of ten vector effects (0-9), or every vector effect (10). */",
+        "    mutateVectorEffects(mode: number, intensity: number, seed: number): number;"
+    ]);
+
+patch("web/packages/core/src/internal/player/impl_v1.ts",
+    ["    mutateSpriteAspectWarp(intensity: number, glitchChance: number, seed: number): number {"],
+    [
+        "    mutateVectorEffects(mode: number, intensity: number, seed: number): number {",
+        "        return this.#inner.mutateVectorEffects(mode, intensity, seed);",
+        "    }",
+        "",
+        "    mutateSpriteAspectWarp(intensity: number, glitchChance: number, seed: number): number {"
+    ]);
+
+patch("web/packages/core/src/internal/player/inner.tsx",
+    ["    mutateSpriteAspectWarp(intensity: number, glitchChance: number, seed: number): number {"],
+    [
+        "    mutateVectorEffects(mode: number, intensity: number, seed: number): number {",
+        "        if (!this.instance) return 0;",
+        "        const safeMode = Math.max(0, Math.min(10, Math.round(mode)));",
+        "        const safeIntensity = Math.max(1, Math.min(100, Math.round(intensity)));",
+        "        return this.instance.mutate_vector_effects(safeMode, safeIntensity, seed >>> 0);",
+        "    }",
+        "",
+        "    mutateSpriteAspectWarp(intensity: number, glitchChance: number, seed: number): number {"
+    ]);
+
+console.log("Patched pinned Ruffle source for classic mutation, Vector Stretch, Sprite Aspect Warp, and ten vector effects.");
 
