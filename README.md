@@ -20,11 +20,12 @@ The patch adds:
 
 - In-place vector mutation methods to Ruffle's `Graphic` and `MorphShape` display objects.
 - Geometry, line, fill, gradient, and bitmap-fill transform perturbations for SWF vector definitions.
+- Recalculation and expansion of SWF geometry bounds after vector changes, so culling and hit testing do not keep stale rectangles.
 - Invalidation of Graphic tessellation handles and MorphShape's cached interpolated frames whenever their source vectors change.
 - Invalidation of active display-object bitmap caches and their ancestors.
 - A WASM method and public JavaScript method: `player.ruffle().mutateVectorShapes(intensity, seed)`.
 
-The mutation walks all character definitions registered in the loaded movie libraries, including symbols used by later timeline frames, rather than only changing whatever is visible at the instant the button is pressed. Active instances are then invalidated so the next normal render draws the changed vectors. The timeline is not reloaded or restarted.
+The mutation walks all character definitions registered in the loaded movie libraries, including symbols used by later timeline frames, rather than only changing whatever is visible at the instant the button is pressed. All active Stage levels are traversed to invalidate display-object bitmap caches and their ancestors, so the next normal render draws the changed vectors. The timeline is not reloaded or restarted.
 
 The UI maps its 1–1000 vector slider to the runtime's 1–100 live-mutation intensity range. Each click uses a new random seed, so successive passes do not intentionally repeat the same mutation sequence.
 
