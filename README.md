@@ -31,7 +31,7 @@ The UI maps its 1–1000 vector slider to the runtime's 1–100 live-mutation in
 
 ## Limitations
 
-- The runtime mutation currently targets vector `Graphic` and `MorphShape` definitions. It does not rewrite embedded font glyphs, text runs, bitmap pixel data, or script-created `Drawing` content.
+- The runtime mutation currently targets vector `Graphic` and `MorphShape` definitions, including bitmap/gradient fill matrices so embedded textures can be stretched in place. It does not rewrite standalone bitmap pixel buffers, embedded font glyphs, text runs, or script-created `Drawing` content; pre-playback processing handles supported bitmap pixels separately.
 - The runtime mutation affects the in-memory Ruffle movie. The SWF export button exports the separate pre-playback SWF copy; it does not serialize live in-memory Ruffle changes back into a SWF file.
 - The custom Ruffle build must complete successfully in GitHub Actions before the Pages deployment contains the updated player.
 - The mutation changes geometry and styles while preserving the SWF movie's timeline and script execution. It does not guarantee that every unusual SWF feature will remain visually coherent after heavy corruption.
