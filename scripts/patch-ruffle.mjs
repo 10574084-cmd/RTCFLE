@@ -210,7 +210,7 @@ patch("core/src/player.rs",
         "                }",
         "            }",
         "",
-        "            invalidate_vector_display_object(context.stage.into());"
+        "            invalidate_vector_display_object(context.stage.into());",
         "            if changed > 0 {",
         "                *context.needs_render = true;",
         "            }",
