@@ -131,7 +131,7 @@ patch("core/src/display_object/morph_shape.rs",
     ["    #[collect(require_static)]", "    start: RefLock<swf::MorphShape>,", "", "    #[collect(require_static)]", "    end: RefLock<swf::MorphShape>,"]);
 
 patch("core/src/display_object/morph_shape.rs",
-    ["            BoundsMode::Script => shared.start.shape_bounds,", "", "            // For getRect() or hitTestObject(), use the `edge_bounds` that were declared to be the", "            // bounds of the start shape", "            BoundsMode::ScriptWithoutStrokes => shared.start.edge_bounds,"],
+    ["            BoundsMode::Script => shared.start.shape_bounds,", "", "            // For getRect(), use the `edge_bounds` that were declared to be the", "            // bounds of the start shape", "            BoundsMode::ScriptWithoutStrokes => shared.start.edge_bounds,"],
     ["            BoundsMode::Script => shared.start.borrow().shape_bounds,", "", "            // For getRect() or hitTestObject(), use the `edge_bounds` that were declared to be the", "            // bounds of the start shape", "            BoundsMode::ScriptWithoutStrokes => shared.start.borrow().edge_bounds,"]);
 
 patch("core/src/display_object/morph_shape.rs",
