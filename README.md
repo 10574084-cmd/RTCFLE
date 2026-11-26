@@ -1,15 +1,19 @@
 # RTCFLE
 
-RTCFLE is a browser-based SWF visual corruption playground powered by [Ruffle](https://ruffle.rs/) and served as a GitHub Pages site.
+RTCFLE is a standalone-style SWF asset corruption tool for the browser, powered by [Ruffle](https://ruffle.rs/) and published with GitHub Pages.
 
 ## Features
 
 - Load local SWF files by browsing or drag-and-drop.
-- Play SWF content through the official Ruffle web player loaded from unpkg.
-- Modify supported SWF assets before playback: vector fill/gradient/line colors, vector edge coordinates, embedded lossless bitmap resources, and decodable JPEG/PNG/GIF bitmap resources.
-- Apply display effects in real time: hue shift, contrast, saturation, CRT scanlines, noise, jitter, and glitch bars.
-- Randomize the display effects manually or automatically.
-- Preserve the original selected file; internal edits are made to a temporary in-memory copy.
+- Play the selected SWF through the Ruffle web player loaded from unpkg.
+- Corrupt supported internal vector assets: fill and gradient colors, line colors, and shape edge coordinates.
+- Corrupt supported embedded bitmap assets: lossless bitmap pixel data and decodable JPEG/PNG/GIF image resources.
+- Choose vector-only, image-only, or both asset targets.
+- Adjust internal corruption strength and algorithm.
+- Export the modified SWF as a separate file.
+- Keep the source file unchanged; mutation happens on a temporary in-memory copy.
+
+There are no screen filters, CRT overlays, visual jitter, hue/contrast effects, or display randomizers. RTCFLE edits supported resources inside the SWF file itself.
 
 ## Supported SWF asset edits
 
@@ -21,7 +25,7 @@ RTCFLE is a browser-based SWF visual corruption playground powered by [Ruffle](h
 
 ## Safety and file handling
 
-The mutator edits only a temporary copy in browser memory. The original file is not uploaded or overwritten. Ruffle keeps its browser sandbox, ActionScript-to-page access disabled, external URL opening denied, and networking APIs restricted to its internal mode. The app intentionally does not disable Ruffle or browser security protections.
+The mutator edits only a temporary copy in browser memory. The original file is not uploaded or overwritten. Ruffle keeps its browser sandbox, ActionScript-to-page access disabled, external URL opening denied, and networking APIs restricted to its internal mode. The app does not disable Ruffle or browser security protections.
 
 An internet connection is required to load the Ruffle player from unpkg. Some SWF files may rely on external resources or unsupported Flash features and may not work in Ruffle.
 
