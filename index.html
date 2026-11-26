@@ -257,6 +257,17 @@
                 <option value="vector-all">★ ALL VECTOR EFFECTS</option>
               </select>
             </div>
+
+            <div id="vectorAppearanceSettings" class="hidden" style="margin-top:12px;padding:11px;border:1px solid #29394b;border-radius:9px;background:rgba(255,255,255,.02)">
+              <div class="control-heading"><strong>VECTOR APPEARANCE OPTIONS</strong><span class="tiny">PER MODE</span></div>
+              <label class="toggle">Corrupt vector colors <input type="checkbox" id="liveColorCorruption" checked></label>
+              <label class="toggle" style="margin-top:8px">Cartoon / cel-shaded look <input type="checkbox" id="liveCartoonLook"></label>
+              <div id="cartoonStrengthSettings" class="range-row hidden" style="margin-bottom:0">
+                <div><label class="range-label" for="cartoonStrength">Cartoon color flattening + outline strength</label><input type="range" id="cartoonStrength" min="1" max="100" value="60"></div>
+                <span class="range-value" id="cartoonStrengthValue">60%</span>
+              </div>
+              <p id="vectorAppearanceHint" class="tiny" style="margin:9px 0 0;line-height:1.5">Choose whether live vector colors can change. Cartoon mode reduces color levels and makes outlines bolder.</p>
+            </div>
             <div id="aspectWarpSettings" class="hidden" style="margin-top:12px;padding:11px;border:1px solid #29394b;border-radius:9px;background:rgba(255,255,255,.02)">
               <div class="range-row" style="margin-top:0">
                 <div><label class="range-label" for="aspectWarpStrength">Aspect-ratio distortion</label><input type="range" id="aspectWarpStrength" min="1" max="1000" value="420"></div>
@@ -314,7 +325,7 @@
 
       const rufflePromise = new Promise((resolve, reject) => {
         const script = document.createElement("script");
-        script.src = "ruffle/ruffle.js?v=ten-vector-effects-fullscreen-1";
+        script.src = "ruffle/ruffle.js?v=vector-appearance-options-1";
         script.async = true;
         script.onload = () => {
           ruffleReady = true;
@@ -1153,10 +1164,13 @@
         if (!player || !currentFile) return;
         const mode = $("liveMode").value;
         const isVectorEffect = mode.startsWith("vector-");
-        const effectMode = mode === "vector-all" ? 10 : (isVectorEffect ? Number(mode.slice(7)) : -1);
+        const effectMode = mode === "vector-all" ? 10 : (isVectorEffect ? Number(mode.slice(7)) : 0);
         const strengthControl = mode === "aspect" ? $("aspectWarpStrength") : $("vectorStrength");
         const intensity = Math.max(1, Math.min(100, Math.ceil(Number(strengthControl.value) / 10)));
         const glitchChance = Number($("aspectGlitchChance").value);
+        const corruptColors = $("liveColorCorruption").checked;
+        const cartoonize = $("liveCartoonLook").checked;
+        const cartoonStrength = Number($("cartoonStrength").value);
         const seed = new Uint32Array(1);
         if (window.crypto && window.crypto.getRandomValues) {
           window.crypto.getRandomValues(seed);
@@ -1166,19 +1180,21 @@
         try {
           let changed = 0;
           let modeName = "CLASSIC MUTATION";
-          if (mode === "stretch") {
-            changed = player.ruffle().mutateVectorStretch(intensity, seed[0]);
-            modeName = "VECTOR STRETCH";
-          } else if (mode === "aspect") {
+          if (mode === "aspect") {
             changed = player.ruffle().mutateSpriteAspectWarp(intensity, glitchChance, seed[0]);
             modeName = "SPRITE ASPECT WARP";
-          } else if (isVectorEffect) {
-            changed = player.ruffle().mutateVectorEffects(effectMode, intensity, seed[0]);
-            modeName = effectMode === 10 ? "ALL VECTOR EFFECTS" : $("liveMode").selectedOptions[0].text.toUpperCase();
           } else {
-            changed = player.ruffle().mutateVectorShapes(intensity, seed[0]);
+            const kind = mode === "stretch" ? 1 : (isVectorEffect ? 2 : 0);
+            changed = player.ruffle().mutateVectorRuntimeWithOptions(
+              kind, effectMode, intensity, seed[0], corruptColors, cartoonize, cartoonStrength
+            );
+            modeName = mode === "stretch" ? "VECTOR STRETCH" : (isVectorEffect
+              ? (effectMode === 10 ? "ALL VECTOR EFFECTS" : $("liveMode").selectedOptions[0].text.toUpperCase())
+              : "CLASSIC MUTATION");
           }
-          $("liveCorruptStatus").textContent = "LIVE · " + modeName + ": " + changed + " live instances/fields changed. The movie was not reloaded.";
+          const appearanceSummary = mode === "aspect" ? "" :
+            " · colors " + (corruptColors ? "ON" : "OFF") + " · cartoon " + (cartoonize ? "ON" : "OFF");
+          $("liveCorruptStatus").textContent = "LIVE · " + modeName + ": " + changed + " live instances/fields changed" + appearanceSummary + ". The movie was not reloaded.";
           setStatus(modeName + ": " + changed + " LIVE CHANGES");
         } catch (error) {
           console.error("RTCFLE live mutation failed:", error);
@@ -1237,18 +1253,30 @@
       $("aspectGlitchChance").addEventListener("input", () => {
         $("aspectGlitchChanceValue").textContent = $("aspectGlitchChance").value + "%";
       });
-      $("liveMode").addEventListener("change", () => {
+      function updateLiveModeSettings() {
         const mode = $("liveMode").value;
         const isAspect = mode === "aspect";
         const isVectorEffect = mode.startsWith("vector-");
+        const hasVectorAppearance = !isAspect;
         $("aspectWarpSettings").classList.toggle("hidden", !isAspect);
+        $("vectorAppearanceSettings").classList.toggle("hidden", !hasVectorAppearance);
+        $("cartoonStrengthSettings").classList.toggle("hidden", !hasVectorAppearance || !$("liveCartoonLook").checked);
         $("liveMutateButton").textContent = isAspect ? "↔ Aspect Warp" : (isVectorEffect ? "✦ Apply vector effect" : (mode === "stretch" ? "↗ Vector Stretch" : "⌁ Mutate live"));
+        $("vectorAppearanceHint").textContent = mode === "classic"
+          ? "Classic Mutation: disable random fill, stroke and gradient color changes, or enable a flatter cartoon palette with bolder outlines."
+          : (mode === "stretch"
+            ? "Vector Stretch: independently control color glitches while keeping the geometry stretch. Cartoon mode flattens the palette and thickens outlines."
+            : "Vector effects: color changes are skipped when disabled, including gradient and stroke color glitches. Cartoon mode remains an independent style pass.");
         $("liveCorruptStatus").textContent = isAspect
-          ? "SPRITE ASPECT WARP: changes the live X/Y scale of current display-list instances; it does not rewrite shared vector shapes."
-          : (isVectorEffect
-            ? "VECTOR EFFECT: " + $("liveMode").selectedOptions[0].text + " transforms Graphic and MorphShape geometry/styles in the live movie."
-            : "LIVE MUTATION: " + (mode === "stretch" ? "Vector Stretch" : "Classic Mutation") + " changes the live movie without reloading it.");
+          ? "SPRITE ASPECT WARP: changes live X/Y transforms; vector color and cartoon controls do not apply to this mode."
+          : "LIVE MUTATION: " + (isVectorEffect ? $("liveMode").selectedOptions[0].text : (mode === "stretch" ? "Vector Stretch" : "Classic Mutation")) + " supports independent color and cartoon appearance options.";
+      }
+      $("liveMode").addEventListener("change", updateLiveModeSettings);
+      $("liveCartoonLook").addEventListener("change", updateLiveModeSettings);
+      $("cartoonStrength").addEventListener("input", () => {
+        $("cartoonStrengthValue").textContent = $("cartoonStrength").value + "%";
       });
+      updateLiveModeSettings();
       $("assetCorrupt").addEventListener("change", () => {
         $("assetReport").textContent = $("assetCorrupt").checked ? "Asset mutator armed · reload a SWF to apply internal edits." : "Asset mutator disabled · reload a SWF to restore its original assets.";
       });
