@@ -72,7 +72,9 @@
     .empty-icon { width: 58px; height: 58px; display: grid; place-items: center; border: 1px solid rgba(80,243,220,.35); border-radius: 16px; color: var(--cyan); font-size: 25px; margin-bottom: 17px; background: rgba(80,243,220,.06); }
     .empty-state h2 { margin: 0 0 8px; font-size: 17px; }
     .empty-state p { max-width: 360px; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
-    .stage:fullscreen { width:100vw; height:100vh; min-height:100vh; max-width:100vw; max-height:100vh; aspect-ratio:auto; border:0; border-radius:0; background:#03060a; }\n    .stage:fullscreen #ruffleMount { width:100%; height:100%; }\n    .stage-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 11px 3px 0; color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .stage:fullscreen { width:100vw; height:100vh; min-height:100vh; max-width:100vw; max-height:100vh; aspect-ratio:auto; border:0; border-radius:0; background:#03060a; }
+    .stage:fullscreen #ruffleMount { width:100%; height:100%; }
+    .stage-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 11px 3px 0; color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; }
     .transport { display: flex; flex-wrap: wrap; gap: 9px; padding: 0 15px 15px; }
     .btn {
       display: inline-flex; justify-content: center; align-items: center; gap: 8px; min-height: 38px;
@@ -166,7 +168,8 @@
           <button class="btn" id="reloadButton" disabled>↻ Reload</button>
           <button class="btn pink" id="stopButton" disabled>■ Unload</button>
           <button class="btn" id="exportButton" disabled>↓ Export corrupted SWF</button>
-          <button class="btn" id="liveMutateButton" disabled>⌁ Mutate live</button>\n          <button class="btn" id="fullscreenButton" type="button">⛶ Fullscreen preview</button>
+          <button class="btn" id="liveMutateButton" disabled>⌁ Mutate live</button>
+          <button class="btn" id="fullscreenButton" type="button">⛶ Fullscreen preview</button>
           <input type="file" id="fileInput" accept=".swf,application/x-shockwave-flash">
         </div>
         <div class="upload-zone" id="dropZone">
@@ -223,7 +226,20 @@
               <select id="liveMode" style="width:100%;padding:9px;border-radius:8px;background:#111c29;color:#dce8f6;border:1px solid #34465a">
                 <option value="classic">Classic Mutation</option>
                 <option value="stretch">Vector Stretch</option>
-                <option value="aspect">Sprite Aspect Warp</option>\n                <optgroup label="10 NEW VECTOR MODES">\n                  <option value="vector-0">Shatter Lines</option>\n                  <option value="vector-1">Melt Geometry</option>\n                  <option value="vector-2">Ripple Distortion</option>\n                  <option value="vector-3">Mirror Flip</option>\n                  <option value="vector-4">Pixel Grid</option>\n                  <option value="vector-5">Spiral Twist</option>\n                  <option value="vector-6">Outline Explosion</option>\n                  <option value="vector-7">Gradient Storm</option>\n                  <option value="vector-8">Ghost Contours</option>\n                  <option value="vector-9">Vector Chaos</option>\n                </optgroup>\n                <option value="vector-all">★ ALL VECTOR EFFECTS</option>
+                <option value="aspect">Sprite Aspect Warp</option>
+                <optgroup label="10 NEW VECTOR MODES">
+                  <option value="vector-0">Shatter Lines</option>
+                  <option value="vector-1">Melt Geometry</option>
+                  <option value="vector-2">Ripple Distortion</option>
+                  <option value="vector-3">Mirror Flip</option>
+                  <option value="vector-4">Pixel Grid</option>
+                  <option value="vector-5">Spiral Twist</option>
+                  <option value="vector-6">Outline Explosion</option>
+                  <option value="vector-7">Gradient Storm</option>
+                  <option value="vector-8">Ghost Contours</option>
+                  <option value="vector-9">Vector Chaos</option>
+                </optgroup>
+                <option value="vector-all">★ ALL VECTOR EFFECTS</option>
               </select>
             </div>
             <div id="aspectWarpSettings" class="hidden" style="margin-top:12px;padding:11px;border:1px solid #29394b;border-radius:9px;background:rgba(255,255,255,.02)">
@@ -1046,7 +1062,8 @@
       document.addEventListener("fullscreenchange", () => {
         $("fullscreenButton").textContent = document.fullscreenElement === stage ? "⤢ Exit fullscreen" : "⛶ Fullscreen preview";
       });
-\n      $("exportButton").addEventListener("click", () => {
+
+      $("exportButton").addEventListener("click", () => {
         if (!currentMutatedBlob) return;
         const downloadUrl = URL.createObjectURL(currentMutatedBlob);
         const anchor = document.createElement("a");
