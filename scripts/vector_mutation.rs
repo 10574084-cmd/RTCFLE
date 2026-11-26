@@ -509,3 +509,279 @@ pub(crate) fn mutate_sprite_aspect_matrix(
     matrix.d = matrix.d.clamp(-20.0, 20.0);
     true
 }
+
+
+// Ten dedicated vector-only corruption passes. Modes 0-9 are selectable;
+// mode 10 runs all ten sequentially using one deterministic random stream.
+fn effect_pair(
+    dx: &mut Twips,
+    dy: &mut Twips,
+    seed: &mut u32,
+    intensity: u8,
+    mode: u8,
+    index: u32,
+) -> u32 {
+    let x = dx.get();
+    let y = dy.get();
+    let amp = i32::from(intensity.clamp(1, 100));
+    match mode {
+        // 0 — Shatter Lines: kick edge segments into sharp, broken directions.
+        0 => {
+            *dx = Twips::new(x.saturating_add(offset(seed, intensity).saturating_mul(8 + amp / 5)));
+            *dy = Twips::new(y.saturating_add(offset(seed, intensity).saturating_mul(8 + amp / 5)));
+        }
+        // 1 — Melt Geometry: make contours sag and flow downward.
+        1 => {
+            let flow = offset(seed, intensity).abs().saturating_mul(2 + amp / 18);
+            *dx = Twips::new(x.saturating_add(offset(seed, intensity)));
+            *dy = Twips::new(y.saturating_add(flow));
+        }
+        // 2 — Ripple Distortion: alternating waves travel across edge records.
+        2 => {
+            let wave = offset(seed, intensity).saturating_mul(2 + amp / 14);
+            let direction = if index % 2 == 0 { 1 } else { -1 };
+            *dy = Twips::new(y.saturating_add(wave.saturating_mul(direction)));
+            *dx = Twips::new(x.saturating_add(wave / 3));
+        }
+        // 3 — Mirror Flip: reflect selected vector axes.
+        3 => {
+            if next(seed) & 1 == 0 { *dx = Twips::new(x.saturating_neg()); }
+            else { *dy = Twips::new(y.saturating_neg()); }
+        }
+        // 4 — Pixel Grid: quantize vector deltas into chunky steps.
+        4 => {
+            let step = 24 + amp * 9;
+            let snap = |value: i32| -> i32 {
+                let rounded = value.saturating_add(if value >= 0 { step / 2 } else { -(step / 2) });
+                (rounded / step).saturating_mul(step)
+            };
+            *dx = Twips::new(snap(x));
+            *dy = Twips::new(snap(y));
+        }
+        // 5 — Spiral Twist: rotate edge vectors around their local origin.
+        5 => {
+            let angle = ((next(seed) % 121) as f32 / 100.0 - 0.60)
+                * (0.35 + f32::from(intensity) / 100.0);
+            let (sin, cos) = angle.sin_cos();
+            let nx = (x as f32 * cos - y as f32 * sin) as i32;
+            let ny = (x as f32 * sin + y as f32 * cos) as i32;
+            *dx = Twips::new(nx.clamp(-750_000, 750_000));
+            *dy = Twips::new(ny.clamp(-750_000, 750_000));
+        }
+        // 6 — Outline Explosion is handled in line-style data.
+        6 => return 0,
+        // 7 — Gradient Storm is handled in fill-style data.
+        7 => return 0,
+        // 8 — Ghost Contours: offset alternating vector segments like doubled outlines.
+        8 => {
+            if index % 2 == 0 {
+                let ghost = offset(seed, intensity).saturating_mul(2 + amp / 25);
+                *dx = Twips::new(x.saturating_add(ghost));
+                *dy = Twips::new(y.saturating_sub(ghost));
+            }
+        }
+        // 9 — Vector Chaos: mix flips, bursts, and axis stretching.
+        9 => match next(seed) % 4 {
+            0 => { *dx = Twips::new(x.saturating_neg()); }
+            1 => { *dy = Twips::new(y.saturating_neg()); }
+            2 => { stretch_pair(dx, dy, seed); }
+            _ => {
+                *dx = Twips::new(x.saturating_add(offset(seed, intensity).saturating_mul(12)));
+                *dy = Twips::new(y.saturating_add(offset(seed, intensity).saturating_mul(12)));
+            }
+        },
+        _ => return 0,
+    }
+    1
+}
+
+fn effect_styles(
+    fills: &mut [FillStyle],
+    lines: &mut [LineStyle],
+    seed: &mut u32,
+    intensity: u8,
+    mode: u8,
+) -> u32 {
+    let mut changed = 0;
+    match mode {
+        // 6 — Outline Explosion: thicken, collapse, and recolor vector strokes.
+        6 => {
+            for line in lines {
+                if should_change(seed, intensity) {
+                    let width = line.width().get();
+                    let factor = if next(seed) % 5 == 0 { 0 } else { 2 + (next(seed) % 7) as i32 };
+                    let new_width = width.saturating_mul(factor).clamp(0, 65_535);
+                    *line = line.clone().with_width(Twips::new(new_width));
+                    changed += 1;
+                }
+                let mut fill = line.fill_style().clone();
+                let before = glitch_color_count(&mut fill, seed, intensity);
+                if before > 0 {
+                    *line = line.clone().with_fill_style(fill);
+                    changed += before;
+                }
+            }
+        }
+        // 7 — Gradient Storm: shove gradient matrices and reorder their color stops.
+        7 => {
+            for fill in fills {
+                match fill {
+                    FillStyle::LinearGradient(gradient)
+                    | FillStyle::RadialGradient(gradient)
+                    | FillStyle::FocalGradient { gradient, .. } => {
+                        changed += stretch_gradient(gradient, seed, intensity);
+                        let stop_count = gradient.records.len();
+                        if stop_count > 1 && should_change(seed, intensity) {
+                            let shift = (next(seed) as usize) % stop_count;
+                            gradient.records.rotate_left(shift);
+                            changed += 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            for line in lines {
+                let mut fill = line.fill_style().clone();
+                let before = match &mut fill {
+                    FillStyle::LinearGradient(gradient)
+                    | FillStyle::RadialGradient(gradient)
+                    | FillStyle::FocalGradient { gradient, .. } => stretch_gradient(gradient, seed, intensity),
+                    _ => 0,
+                };
+                if before > 0 {
+                    *line = line.clone().with_fill_style(fill);
+                    changed += before;
+                }
+            }
+        }
+        // 8 — Ghost Contours: leave translucent color echoes in vector fills.
+        8 => {
+            for fill in fills {
+                changed += glitch_color_count(fill, seed, intensity);
+            }
+            for line in lines {
+                let mut fill = line.fill_style().clone();
+                let before = glitch_color_count(&mut fill, seed, intensity);
+                if before > 0 {
+                    *line = line.clone().with_fill_style(fill);
+                    changed += before;
+                }
+            }
+        }
+        // 9 — Vector Chaos combines stroke and fill transformations.
+        9 => changed += stretch_style_lists(fills, lines, seed, intensity),
+        _ => {}
+    }
+    changed
+}
+
+fn glitch_color_count(fill: &mut FillStyle, seed: &mut u32, intensity: u8) -> u32 {
+    match fill {
+        FillStyle::Color(color) => glitch_color(color, seed, intensity),
+        FillStyle::LinearGradient(gradient)
+        | FillStyle::RadialGradient(gradient)
+        | FillStyle::FocalGradient { gradient, .. } => {
+            let mut changed = 0;
+            for stop in &mut gradient.records {
+                changed += glitch_color(&mut stop.color, seed, intensity);
+            }
+            changed
+        }
+        FillStyle::Bitmap { matrix, .. } => {
+            if should_change(seed, intensity) {
+                matrix.tx = Twips::new(matrix.tx.get().saturating_add(offset(seed, intensity) * 80));
+                1
+            } else { 0 }
+        }
+    }
+}
+
+fn effect_records(records: &mut [ShapeRecord], seed: &mut u32, intensity: u8, mode: u8) -> u32 {
+    let mut changed = 0;
+    let mut edge_index = 0u32;
+    for record in records {
+        match record {
+            ShapeRecord::StraightEdge { delta } => {
+                if should_change(seed, intensity) {
+                    changed += effect_pair(&mut delta.dx, &mut delta.dy, seed, intensity, mode, edge_index);
+                }
+                edge_index += 1;
+            }
+            ShapeRecord::CurvedEdge { control_delta, anchor_delta } => {
+                if should_change(seed, intensity) {
+                    changed += effect_pair(&mut control_delta.dx, &mut control_delta.dy, seed, intensity, mode, edge_index);
+                }
+                if should_change(seed, intensity) {
+                    changed += effect_pair(&mut anchor_delta.dx, &mut anchor_delta.dy, seed, intensity, mode, edge_index.wrapping_add(1));
+                }
+                edge_index += 2;
+            }
+            ShapeRecord::StyleChange(change) => {
+                if let Some(point) = &mut change.move_to {
+                    if mode == 1 && should_change(seed, intensity) {
+                        point.y = Twips::new(point.y.get().saturating_add(offset(seed, intensity).abs() * 3));
+                        changed += 1;
+                    } else if mode == 8 && should_change(seed, intensity) {
+                        point.x = Twips::new(point.x.get().saturating_add(offset(seed, intensity) * 4));
+                        point.y = Twips::new(point.y.get().saturating_sub(offset(seed, intensity) * 4));
+                        changed += 1;
+                    } else if mode == 9 && should_change(seed, intensity) {
+                        point.x = Twips::new(point.x.get().saturating_add(offset(seed, intensity) * 7));
+                        point.y = Twips::new(point.y.get().saturating_add(offset(seed, intensity) * 7));
+                        changed += 1;
+                    }
+                }
+                if let Some(styles) = &mut change.new_styles {
+                    changed += effect_styles(&mut styles.fill_styles, &mut styles.line_styles, seed, intensity, mode);
+                }
+            }
+        }
+    }
+    changed
+}
+
+fn mutate_vector_effect_shape_mode(shape: &mut swf::Shape, seed: &mut u32, intensity: u8, mode: u8) -> u32 {
+    let mut changed = effect_styles(&mut shape.styles.fill_styles, &mut shape.styles.line_styles, seed, intensity, mode);
+    changed += effect_records(&mut shape.shape, seed, intensity, mode);
+    if changed > 0 {
+        let bounds = ruffle_render::shape_utils::calculate_shape_bounds(&shape.shape);
+        shape.shape_bounds = shape.shape_bounds.union(&bounds);
+        shape.edge_bounds = shape.edge_bounds.union(&bounds);
+    }
+    changed
+}
+
+pub(crate) fn mutate_vector_effect_shape(shape: &mut swf::Shape, seed: &mut u32, intensity: u8, mode: u8) -> u32 {
+    let mut changed = 0;
+    if mode == 10 {
+        for effect in 0..10 {
+            changed += mutate_vector_effect_shape_mode(shape, seed, intensity, effect);
+        }
+    } else if mode < 10 {
+        changed += mutate_vector_effect_shape_mode(shape, seed, intensity, mode);
+    }
+    changed
+}
+
+fn mutate_vector_effect_morph_mode(shape: &mut swf::MorphShape, seed: &mut u32, intensity: u8, mode: u8) -> u32 {
+    let mut changed = effect_styles(&mut shape.fill_styles, &mut shape.line_styles, seed, intensity, mode);
+    changed += effect_records(&mut shape.shape, seed, intensity, mode);
+    if changed > 0 {
+        let bounds = ruffle_render::shape_utils::calculate_shape_bounds(&shape.shape);
+        shape.shape_bounds = bounds;
+        shape.edge_bounds = bounds;
+    }
+    changed
+}
+
+pub(crate) fn mutate_vector_effect_morph_shape(shape: &mut swf::MorphShape, seed: &mut u32, intensity: u8, mode: u8) -> u32 {
+    let mut changed = 0;
+    if mode == 10 {
+        for effect in 0..10 {
+            changed += mutate_vector_effect_morph_mode(shape, seed, intensity, effect);
+        }
+    } else if mode < 10 {
+        changed += mutate_vector_effect_morph_mode(shape, seed, intensity, mode);
+    }
+    changed
+}

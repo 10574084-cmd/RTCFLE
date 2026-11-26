@@ -72,6 +72,8 @@
     .empty-icon { width: 58px; height: 58px; display: grid; place-items: center; border: 1px solid rgba(80,243,220,.35); border-radius: 16px; color: var(--cyan); font-size: 25px; margin-bottom: 17px; background: rgba(80,243,220,.06); }
     .empty-state h2 { margin: 0 0 8px; font-size: 17px; }
     .empty-state p { max-width: 360px; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+    .stage:fullscreen { width:100vw; height:100vh; min-height:100vh; max-width:100vw; max-height:100vh; aspect-ratio:auto; border:0; border-radius:0; background:#03060a; }
+    .stage:fullscreen #ruffleMount { width:100%; height:100%; }
     .stage-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 11px 3px 0; color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; }
     .transport { display: flex; flex-wrap: wrap; gap: 9px; padding: 0 15px 15px; }
     .btn {
@@ -167,6 +169,7 @@
           <button class="btn pink" id="stopButton" disabled>■ Unload</button>
           <button class="btn" id="exportButton" disabled>↓ Export corrupted SWF</button>
           <button class="btn" id="liveMutateButton" disabled>⌁ Mutate live</button>
+          <button class="btn" id="fullscreenButton" type="button">⛶ Fullscreen preview</button>
           <input type="file" id="fileInput" accept=".swf,application/x-shockwave-flash">
         </div>
         <div class="upload-zone" id="dropZone">
@@ -224,6 +227,19 @@
                 <option value="classic">Classic Mutation</option>
                 <option value="stretch">Vector Stretch</option>
                 <option value="aspect">Sprite Aspect Warp</option>
+                <optgroup label="10 NEW VECTOR MODES">
+                  <option value="vector-0">Shatter Lines</option>
+                  <option value="vector-1">Melt Geometry</option>
+                  <option value="vector-2">Ripple Distortion</option>
+                  <option value="vector-3">Mirror Flip</option>
+                  <option value="vector-4">Pixel Grid</option>
+                  <option value="vector-5">Spiral Twist</option>
+                  <option value="vector-6">Outline Explosion</option>
+                  <option value="vector-7">Gradient Storm</option>
+                  <option value="vector-8">Ghost Contours</option>
+                  <option value="vector-9">Vector Chaos</option>
+                </optgroup>
+                <option value="vector-all">★ ALL VECTOR EFFECTS</option>
               </select>
             </div>
             <div id="aspectWarpSettings" class="hidden" style="margin-top:12px;padding:11px;border:1px solid #29394b;border-radius:9px;background:rgba(255,255,255,.02)">
@@ -283,7 +299,7 @@
 
       const rufflePromise = new Promise((resolve, reject) => {
         const script = document.createElement("script");
-        script.src = "ruffle/ruffle.js?v=sprite-aspect-warp-1";
+        script.src = "ruffle/ruffle.js?v=ten-vector-effects-fullscreen-1";
         script.async = true;
         script.onload = () => {
           ruffleReady = true;
@@ -994,6 +1010,8 @@
       $("liveMutateButton").addEventListener("click", () => {
         if (!player || !currentFile) return;
         const mode = $("liveMode").value;
+        const isVectorEffect = mode.startsWith("vector-");
+        const effectMode = mode === "vector-all" ? 10 : (isVectorEffect ? Number(mode.slice(7)) : -1);
         const strengthControl = mode === "aspect" ? $("aspectWarpStrength") : $("vectorStrength");
         const intensity = Math.max(1, Math.min(100, Math.ceil(Number(strengthControl.value) / 10)));
         const glitchChance = Number($("aspectGlitchChance").value);
@@ -1012,6 +1030,9 @@
           } else if (mode === "aspect") {
             changed = player.ruffle().mutateSpriteAspectWarp(intensity, glitchChance, seed[0]);
             modeName = "SPRITE ASPECT WARP";
+          } else if (isVectorEffect) {
+            changed = player.ruffle().mutateVectorEffects(effectMode, intensity, seed[0]);
+            modeName = effectMode === 10 ? "ALL VECTOR EFFECTS" : $("liveMode").selectedOptions[0].text.toUpperCase();
           } else {
             changed = player.ruffle().mutateVectorShapes(intensity, seed[0]);
           }
@@ -1023,6 +1044,25 @@
           setStatus("LIVE MUTATION ERROR");
         }
       });
+
+      $("fullscreenButton").addEventListener("click", async () => {
+        try {
+          if (document.fullscreenElement === stage) {
+            await document.exitFullscreen();
+          } else if (stage.requestFullscreen) {
+            await stage.requestFullscreen();
+          } else {
+            $("liveCorruptStatus").textContent = "Fullscreen is not supported by this browser.";
+          }
+        } catch (error) {
+          console.warn("RTCFLE fullscreen request failed:", error);
+          $("liveCorruptStatus").textContent = "Could not enter fullscreen. Check browser fullscreen permissions.";
+        }
+      });
+      document.addEventListener("fullscreenchange", () => {
+        $("fullscreenButton").textContent = document.fullscreenElement === stage ? "⤢ Exit fullscreen" : "⛶ Fullscreen preview";
+      });
+
       $("exportButton").addEventListener("click", () => {
         if (!currentMutatedBlob) return;
         const downloadUrl = URL.createObjectURL(currentMutatedBlob);
@@ -1047,12 +1087,16 @@
         $("aspectGlitchChanceValue").textContent = $("aspectGlitchChance").value + "%";
       });
       $("liveMode").addEventListener("change", () => {
-        const isAspect = $("liveMode").value === "aspect";
+        const mode = $("liveMode").value;
+        const isAspect = mode === "aspect";
+        const isVectorEffect = mode.startsWith("vector-");
         $("aspectWarpSettings").classList.toggle("hidden", !isAspect);
-        $("liveMutateButton").textContent = isAspect ? "↔ Aspect Warp" : ($("liveMode").value === "stretch" ? "↗ Vector Stretch" : "⌁ Mutate live");
+        $("liveMutateButton").textContent = isAspect ? "↔ Aspect Warp" : (isVectorEffect ? "✦ Apply vector effect" : (mode === "stretch" ? "↗ Vector Stretch" : "⌁ Mutate live"));
         $("liveCorruptStatus").textContent = isAspect
           ? "SPRITE ASPECT WARP: changes the live X/Y scale of current display-list instances; it does not rewrite shared vector shapes."
-          : "LIVE MUTATION: " + ($("liveMode").value === "stretch" ? "Vector Stretch" : "Classic Mutation") + " changes the live movie without reloading it.";
+          : (isVectorEffect
+            ? "VECTOR EFFECT: " + $("liveMode").selectedOptions[0].text + " transforms Graphic and MorphShape geometry/styles in the live movie."
+            : "LIVE MUTATION: " + (mode === "stretch" ? "Vector Stretch" : "Classic Mutation") + " changes the live movie without reloading it.");
       });
       $("assetCorrupt").addEventListener("change", () => {
         $("assetReport").textContent = $("assetCorrupt").checked ? "Asset mutator armed · reload a SWF to apply internal edits." : "Asset mutator disabled · reload a SWF to restore its original assets.";
