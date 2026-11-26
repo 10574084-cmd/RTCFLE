@@ -241,6 +241,33 @@
           </div>
 
           <div class="control-group">
+            <div class="control-heading"><strong>SWF INTERNAL MUTATOR</strong><span class="tiny">PRE-PLAY</span></div>
+            <label class="toggle">Corrupt internal assets <input type="checkbox" id="assetCorrupt" checked></label>
+            <div style="margin-top:12px">
+              <label class="range-label" for="assetMode">Asset targets</label>
+              <select id="assetMode" style="width:100%;padding:9px;border-radius:8px;background:#111c29;color:#dce8f6;border:1px solid #34465a">
+                <option value="both">Vectors + images</option>
+                <option value="vectors">Vectors only</option>
+                <option value="bitmaps">Images only</option>
+              </select>
+            </div>
+            <div class="range-row" style="margin-top:13px">
+              <div><label class="range-label" for="assetStrength">Internal corruption strength</label><input type="range" id="assetStrength" min="5" max="100" value="65"></div>
+              <span class="range-value" id="assetStrengthValue">65%</span>
+            </div>
+            <div style="margin-top:10px">
+              <label class="range-label" for="assetStyle">Corruption algorithm</label>
+              <select id="assetStyle" style="width:100%;padding:9px;border-radius:8px;background:#111c29;color:#dce8f6;border:1px solid #34465a">
+                <option value="hybrid">Hybrid corruption</option>
+                <option value="swap">RGB channel swap</option>
+                <option value="noise">Color noise</option>
+                <option value="posterize">Color posterization</option>
+              </select>
+            </div>
+            <p id="assetReport" class="tiny" style="margin:11px 0 0;line-height:1.6">Asset mutator: armed · source file stays untouched</p>
+          </div>
+
+          <div class="control-group">
             <div class="control-heading"><strong>RANDOMIZER</strong><span class="tiny">RTC MODE</span></div>
             <div class="actions-grid">
               <button class="btn pink" id="randomButton">⚡ Randomize</button>
@@ -286,6 +313,8 @@
         splashScreen: false,
         backgroundColor: "#03060a",
         allowScriptAccess: false,
+        allowNetworking: "internal",
+        openUrlMode: "deny",
         upgradeToHttps: true
       });
 
@@ -312,6 +341,490 @@
         $("pipelineState").textContent = message.indexOf("ERROR") === 0 ? "ERROR" : (currentFile ? "ACTIVE" : "IDLE");
       }
 
+      function bytesJoin(parts) {
+        const total = parts.reduce((n, part) => n + part.length, 0);
+        const output = new Uint8Array(total);
+        let offset = 0;
+        for (const part of parts) { output.set(part, offset); offset += part.length; }
+        return output;
+      }
+
+      async function zlibTransform(bytes, direction, maxOutput) {
+        const Transform = direction === "inflate" ? DecompressionStream : CompressionStream;
+        if (!Transform) throw new Error("This browser does not support SWF zlib processing.");
+        let total = 0;
+        const stream = new Blob([bytes]).stream().pipeThrough(new Transform("deflate"));
+        if (direction === "inflate") {
+          const limited = stream.pipeThrough(new TransformStream({
+            transform(chunk, controller) {
+              total += chunk.byteLength;
+              if (total > maxOutput) throw new Error("SWF asset data exceeds the safe processing limit.");
+              controller.enqueue(chunk);
+            }
+          }));
+          return new Uint8Array(await new Response(limited).arrayBuffer());
+        }
+        return new Uint8Array(await new Response(stream).arrayBuffer());
+      }
+
+      function clampNumber(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+      }
+
+      function corruptRgb(data, offset, alphaOffset, strength, style, maxValue) {
+        const rPos = offset + (alphaOffset ? 1 : 0);
+        const gPos = rPos + 1;
+        const bPos = rPos + 2;
+        let r = data[rPos], g = data[gPos], b = data[bPos];
+        if (style === "swap") {
+          const old = r; r = g; g = b; b = old;
+        } else if (style === "posterize") {
+          const step = Math.max(2, Math.round(maxValue * (0.08 + strength * 0.34)));
+          r = Math.round(r / step) * step;
+          g = Math.round(g / step) * step;
+          b = Math.round(b / step) * step;
+        } else if (style === "noise") {
+          const spread = maxValue * 0.7 * strength;
+          r += (Math.random() * 2 - 1) * spread;
+          g += (Math.random() * 2 - 1) * spread;
+          b += (Math.random() * 2 - 1) * spread;
+        } else {
+          if (Math.random() < 0.25 + strength * 0.5) {
+            const old = r; r = b; b = g; g = old;
+          }
+          const spread = maxValue * 0.5 * strength;
+          r += (Math.random() * 2 - 1) * spread;
+          g += (Math.random() * 2 - 1) * spread;
+          b += (Math.random() * 2 - 1) * spread;
+          if (Math.random() < strength * 0.3) {
+            const step = Math.max(2, Math.round(maxValue * 0.18));
+            r = Math.round(r / step) * step;
+            g = Math.round(g / step) * step;
+            b = Math.round(b / step) * step;
+          }
+        }
+        data[rPos] = clampNumber(Math.round(r), 0, maxValue);
+        data[gPos] = clampNumber(Math.round(g), 0, maxValue);
+        data[bPos] = clampNumber(Math.round(b), 0, maxValue);
+      }
+
+      class SwfBits {
+        constructor(data, byteOffset) {
+          this.data = data;
+          this.bit = byteOffset * 8;
+        }
+        readBits(count) {
+          if (count < 0 || count > 32 || this.bit + count > this.data.length * 8) throw new Error("Invalid SWF bit field");
+          let value = 0;
+          for (let i = 0; i < count; i++) {
+            const byteIndex = this.bit >> 3;
+            const bitIndex = 7 - (this.bit & 7);
+            value = value * 2 + ((this.data[byteIndex] >> bitIndex) & 1);
+            this.bit++;
+          }
+          return value;
+        }
+        writeBits(count, value) {
+          if (count < 0 || count > 32 || this.bit + count > this.data.length * 8) throw new Error("Invalid SWF write field");
+          let remaining = value;
+          for (let i = count - 1; i >= 0; i--) {
+            const bitValue = Math.floor(remaining / Math.pow(2, i)) & 1;
+            const byteIndex = this.bit >> 3;
+            const bitIndex = 7 - (this.bit & 7);
+            const mask = 1 << bitIndex;
+            this.data[byteIndex] = bitValue ? (this.data[byteIndex] | mask) : (this.data[byteIndex] & ~mask);
+            this.bit++;
+          }
+        }
+        readSigned(count) {
+          const value = this.readBits(count);
+          const pivot = Math.pow(2, count - 1);
+          return value >= pivot ? value - Math.pow(2, count) : value;
+        }
+        writeSigned(count, value) {
+          const limit = Math.pow(2, count - 1);
+          const safe = clampNumber(Math.round(value), -limit, limit - 1);
+          this.writeBits(count, safe < 0 ? safe + Math.pow(2, count) : safe);
+        }
+        align() { this.bit = Math.ceil(this.bit / 8) * 8; }
+        readU8() { this.align(); if (this.bit + 8 > this.data.length * 8) throw new Error("Truncated SWF"); const v = this.data[this.bit >> 3]; this.bit += 8; return v; }
+        readU16() { const a = this.readU8(), b = this.readU8(); return a | (b << 8); }
+        skipRect() {
+          const count = this.readBits(5);
+          if (!count || count > 31) throw new Error("Invalid SWF RECT");
+          for (let i = 0; i < 4; i++) this.readSigned(count);
+          this.align();
+        }
+        skipMatrix() {
+          const hasScale = this.readBits(1);
+          if (hasScale) {
+            const n = this.readBits(5);
+            this.readSigned(n); this.readSigned(n);
+          }
+          const hasRotate = this.readBits(1);
+          if (hasRotate) {
+            const n = this.readBits(5);
+            this.readSigned(n); this.readSigned(n);
+          }
+          const n = this.readBits(5);
+          this.readSigned(n); this.readSigned(n);
+          this.align();
+        }
+        distortSigned(count, strength, stats) {
+          const oldValue = this.readSigned(count);
+          const scale = 1 + (Math.random() * 2 - 1) * strength * 0.85;
+          const offset = (Math.random() * 2 - 1) * strength * 520;
+          this.writeSigned(count, oldValue * scale + offset);
+          stats.vectorEdges++;
+        }
+        mutateColor(alpha, settings, stats) {
+          this.align();
+          const pos = this.bit >> 3;
+          const size = alpha ? 4 : 3;
+          if (pos + size > this.data.length) throw new Error("Truncated SWF color");
+          corruptRgb(this.data, pos, alpha, settings.strength, settings.style, 255);
+          this.bit += size * 8;
+          stats.vectorColors++;
+        }
+      }
+
+      function parseShapeStyles(cursor, version, settings, stats) {
+        let fillCount = cursor.readU8();
+        if (fillCount === 255 && version >= 2) fillCount = cursor.readU16();
+        if (fillCount > 4096) throw new Error("Too many SWF fill styles");
+        for (let i = 0; i < fillCount; i++) {
+          const type = cursor.readU8();
+          if (type === 0x00) {
+            cursor.mutateColor(version >= 3, settings, stats);
+          } else if (type === 0x10 || type === 0x12 || type === 0x13) {
+            cursor.skipMatrix();
+            const gradientHeader = cursor.readU8();
+            const stops = gradientHeader & 15;
+            if (!stops || stops > 15) throw new Error("Invalid gradient");
+            for (let n = 0; n < stops; n++) {
+              cursor.readU8();
+              cursor.mutateColor(version >= 3, settings, stats);
+            }
+            if (type === 0x13) cursor.readU16();
+          } else if (type >= 0x40 && type <= 0x43) {
+            cursor.readU16();
+            cursor.skipMatrix();
+          } else {
+            throw new Error("Unsupported SWF fill style");
+          }
+        }
+
+        let lineCount = cursor.readU8();
+        if (lineCount === 255 && version >= 2) lineCount = cursor.readU16();
+        if (lineCount > 4096) throw new Error("Too many SWF line styles");
+        for (let i = 0; i < lineCount; i++) {
+          cursor.readU16();
+          if (version < 4) {
+            cursor.mutateColor(version >= 3, settings, stats);
+          } else {
+            const startCap = cursor.readBits(2);
+            const joinStyle = cursor.readBits(2);
+            const hasFill = cursor.readBits(1);
+            cursor.readBits(1); cursor.readBits(1); cursor.readBits(1);
+            cursor.readBits(5);
+            cursor.readBits(1);
+            cursor.readBits(2);
+            cursor.align();
+            if (joinStyle === 2) cursor.readU16();
+            if (hasFill) {
+              const fillType = cursor.readU8();
+              if (fillType === 0x00) cursor.mutateColor(true, settings, stats);
+              else if (fillType === 0x10 || fillType === 0x12 || fillType === 0x13) {
+                cursor.skipMatrix();
+                const gh = cursor.readU8();
+                const stops = gh & 15;
+                if (!stops || stops > 15) throw new Error("Invalid line gradient");
+                for (let n = 0; n < stops; n++) { cursor.readU8(); cursor.mutateColor(true, settings, stats); }
+                if (fillType === 0x13) cursor.readU16();
+              } else if (fillType >= 0x40 && fillType <= 0x43) {
+                cursor.readU16(); cursor.skipMatrix();
+              } else throw new Error("Unsupported line fill");
+            } else {
+              cursor.mutateColor(true, settings, stats);
+            }
+          }
+        }
+      }
+
+      function mutateShapeTag(payload, tagCode, settings, stats) {
+        const edited = payload.slice();
+        const beforeColors = stats.vectorColors, beforeEdges = stats.vectorEdges;
+        try {
+          const cursor = new SwfBits(edited, 2);
+          cursor.skipRect();
+          const version = tagCode === 2 ? 1 : (tagCode === 22 ? 2 : (tagCode === 32 ? 3 : 4));
+          if (version === 4) {
+            cursor.skipRect();
+            cursor.readU8();
+          }
+          parseShapeStyles(cursor, version, settings, stats);
+          let fillBits = cursor.readBits(4);
+          let lineBits = cursor.readBits(4);
+          let ended = false;
+          for (let records = 0; records < 500000; records++) {
+            const edge = cursor.readBits(1);
+            if (!edge) {
+              const flags = cursor.readBits(5);
+              if (!flags) { ended = true; break; }
+              const newStyles = (flags & 16) !== 0;
+              const lineChange = (flags & 8) !== 0;
+              const fill1Change = (flags & 4) !== 0;
+              const fill0Change = (flags & 2) !== 0;
+              const moveChange = (flags & 1) !== 0;
+              if (moveChange) {
+                const n = cursor.readBits(5);
+                cursor.readSigned(n); cursor.readSigned(n);
+              }
+              if (fill0Change) cursor.readBits(fillBits);
+              if (fill1Change) cursor.readBits(fillBits);
+              if (lineChange) cursor.readBits(lineBits);
+              if (newStyles) {
+                cursor.align();
+                parseShapeStyles(cursor, version, settings, stats);
+                fillBits = cursor.readBits(4);
+                lineBits = cursor.readBits(4);
+              }
+            } else {
+              const straight = cursor.readBits(1);
+              const n = cursor.readBits(4) + 2;
+              if (straight) {
+                const general = cursor.readBits(1);
+                if (general) {
+                  cursor.distortSigned(n, settings.strength, stats);
+                  cursor.distortSigned(n, settings.strength, stats);
+                } else {
+                  const vertical = cursor.readBits(1);
+                  if (vertical) cursor.distortSigned(n, settings.strength, stats);
+                  else cursor.distortSigned(n, settings.strength, stats);
+                }
+              } else {
+                for (let k = 0; k < 4; k++) cursor.distortSigned(n, settings.strength, stats);
+              }
+            }
+          }
+          if (!ended) throw new Error("Shape record limit reached");
+          if (stats.vectorColors > beforeColors || stats.vectorEdges > beforeEdges) {
+            stats.vectorShapes++;
+            return edited;
+          }
+          return payload;
+        } catch (_) {
+          stats.vectorColors = beforeColors;
+          stats.vectorEdges = beforeEdges;
+          return payload;
+        }
+      }
+
+      async function mutateBitmapTag(payload, tagCode, settings, stats) {
+        if (payload.length < 7) return payload;
+        const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+        const format = payload[2];
+        const width = view.getUint16(3, true);
+        const height = view.getUint16(5, true);
+        if (!width || !height || width * height > 12000000) return payload;
+        const paletteSize = format === 3 ? payload[7] + 1 : 0;
+        const compressedOffset = format === 3 ? 8 : 7;
+        let expected = 0;
+        if (format === 5) expected = width * height * 4;
+        else if (format === 3) expected = paletteSize * (tagCode === 36 ? 4 : 3) + Math.ceil(width / 4) * 4 * height;
+        else if (format === 4 && tagCode === 20) expected = Math.ceil((width * 2) / 4) * 4 * height;
+        else return payload;
+        if (compressedOffset > payload.length || expected > 64 * 1024 * 1024) return payload;
+        let raw;
+        try { raw = await zlibTransform(payload.slice(compressedOffset), "inflate", expected + 64); }
+        catch (_) { return payload; }
+        if (raw.length < expected) return payload;
+
+        if (format === 5) {
+          for (let p = 0; p < width * height; p++) corruptRgb(raw, p * 4, true, settings.strength, settings.style, 255);
+        } else if (format === 3) {
+          const colorBytes = tagCode === 36 ? 4 : 3;
+          for (let p = 0; p < paletteSize; p++) corruptRgb(raw, p * colorBytes, tagCode === 36, settings.strength, settings.style, 255);
+        } else if (format === 4) {
+          const rowBytes = Math.ceil((width * 2) / 4) * 4;
+          for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+              const p = y * rowBytes + x * 2;
+              const word = raw[p] | (raw[p + 1] << 8);
+              let r = (word >> 10) & 31, g = (word >> 5) & 31, b = word & 31;
+              if (settings.style === "swap" || (settings.style === "hybrid" && Math.random() < settings.strength)) {
+                const old = r; r = g; g = b; b = old;
+              } else {
+                const spread = 31 * settings.strength * 0.6;
+                r += (Math.random() * 2 - 1) * spread;
+                g += (Math.random() * 2 - 1) * spread;
+                b += (Math.random() * 2 - 1) * spread;
+              }
+              const changed = (word & 0x8000) | (clampNumber(Math.round(r), 0, 31) << 10) | (clampNumber(Math.round(g), 0, 31) << 5) | clampNumber(Math.round(b), 0, 31);
+              raw[p] = changed & 255; raw[p + 1] = changed >> 8;
+            }
+          }
+        }
+        const packed = await zlibTransform(raw, "deflate", 0);
+        const head = payload.slice(0, compressedOffset);
+        stats.bitmapImages++;
+        return bytesJoin([head, packed]);
+      }
+
+      function detectImageType(bytes) {
+        if (bytes.length >= 8 && bytes[0] === 137 && bytes[1] === 80 && bytes[2] === 78 && bytes[3] === 71) return "image/png";
+        if (bytes.length >= 6 && bytes[0] === 71 && bytes[1] === 73 && bytes[2] === 70) return "image/gif";
+        if (bytes.length >= 2 && bytes[0] === 255 && bytes[1] === 216) return "image/jpeg";
+        return null;
+      }
+
+      async function canvasBlob(canvas, type) {
+        return new Promise((resolve, reject) => {
+          canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Bitmap export failed")), type, 0.92);
+        });
+      }
+
+      async function mutateJpegTag(payload, tagCode, swfVersion, settings, stats) {
+        if (payload.length < 4 || swfVersion < 8 && tagCode !== 21) return { code: tagCode, payload };
+        const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+        const imageStart = tagCode === 21 ? 2 : (tagCode === 90 ? 8 : 6);
+        if (payload.length <= imageStart) return { code: tagCode, payload };
+        const alphaOffset = tagCode === 21 ? 0 : view.getUint32(2, true);
+        const imageEnd = tagCode === 21 ? payload.length : imageStart + alphaOffset;
+        if (imageEnd <= imageStart || imageEnd > payload.length) return { code: tagCode, payload };
+        const imageBytes = payload.slice(imageStart, imageEnd);
+        const mime = detectImageType(imageBytes);
+        if (!mime || (mime !== "image/jpeg" && swfVersion < 8)) return { code: tagCode, payload };
+        let bitmap;
+        try { bitmap = await createImageBitmap(new Blob([imageBytes], { type: mime })); }
+        catch (_) { return { code: tagCode, payload }; }
+        try {
+          if (!bitmap.width || !bitmap.height || bitmap.width * bitmap.height > 8000000) return { code: tagCode, payload };
+          const canvas = typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(bitmap.width, bitmap.height) : document.createElement("canvas");
+          canvas.width = bitmap.width; canvas.height = bitmap.height;
+          const context = canvas.getContext("2d", { willReadFrequently: true });
+          if (!context) return { code: tagCode, payload };
+          context.drawImage(bitmap, 0, 0);
+          const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height);
+          if (tagCode !== 21) {
+            const alphaBytes = payload.slice(imageEnd);
+            const alpha = await zlibTransform(alphaBytes, "inflate", bitmap.width * bitmap.height + 8);
+            if (alpha.length !== bitmap.width * bitmap.height) return { code: tagCode, payload };
+            for (let i = 0; i < alpha.length; i++) pixels.data[i * 4 + 3] = alpha[i];
+          }
+          const data = pixels.data;
+          for (let p = 0; p < bitmap.width * bitmap.height; p++) corruptRgb(data, p * 4, true, settings.strength, settings.style, 255);
+          context.putImageData(pixels, 0, 0);
+          const outputType = (tagCode === 21 && mime === "image/jpeg") ? "image/jpeg" : "image/png";
+          const encoded = await canvasBlob(canvas, outputType);
+          const encodedBytes = new Uint8Array(await encoded.arrayBuffer());
+          stats.bitmapImages++;
+          if (tagCode === 21) return { code: 21, payload: bytesJoin([payload.slice(0, 2), encodedBytes]) };
+          return { code: 21, payload: bytesJoin([payload.slice(0, 2), encodedBytes]) };
+        } catch (_) {
+          return { code: tagCode, payload };
+        } finally {
+          bitmap.close();
+        }
+      }
+
+      function encodeSwfTag(code, payload) {
+        const long = payload.length >= 63;
+        const header = new Uint8Array(long ? 6 : 2);
+        const view = new DataView(header.buffer);
+        view.setUint16(0, (code << 6) | (long ? 63 : payload.length), true);
+        if (long) view.setUint32(2, payload.length, true);
+        return bytesJoin([header, payload]);
+      }
+
+      async function processSwfTags(data, start, end, depth, swfVersion, settings, stats) {
+        if (depth > 16) throw new Error("SWF sprite nesting limit reached");
+        const output = [];
+        let position = start;
+        let processed = 0;
+        while (position + 2 <= end && processed < 1000000) {
+          const header = data[position] | (data[position + 1] << 8);
+          position += 2;
+          const code = header >>> 6;
+          let length = header & 63;
+          if (length === 63) {
+            if (position + 4 > end) throw new Error("Truncated SWF tag header");
+            length = new DataView(data.buffer, data.byteOffset + position, 4).getUint32(0, true);
+            position += 4;
+          }
+          if (length > end - position) throw new Error("SWF tag extends past file end");
+          let payload = data.slice(position, position + length);
+          position += length;
+          let outputCode = code;
+
+          if (code === 39 && payload.length >= 4) {
+            const spriteTags = await processSwfTags(payload, 4, payload.length, depth + 1, swfVersion, settings, stats);
+            payload = bytesJoin([payload.slice(0, 4), spriteTags]);
+          } else if (settings.vectors && (code === 2 || code === 22 || code === 32 || code === 83)) {
+            payload = mutateShapeTag(payload, code, settings, stats);
+          } else if (settings.bitmaps && (code === 20 || code === 36)) {
+            payload = await mutateBitmapTag(payload, code, settings, stats);
+          } else if (settings.bitmaps && (code === 21 || code === 35 || code === 90)) {
+            const changed = await mutateJpegTag(payload, code, swfVersion, settings, stats);
+            outputCode = changed.code;
+            payload = changed.payload;
+          }
+
+          output.push(encodeSwfTag(outputCode, payload));
+          processed++;
+          if (code === 0) break;
+        }
+        if (processed >= 1000000) throw new Error("SWF tag limit reached");
+        if (position < end) output.push(data.slice(position, end));
+        return bytesJoin(output);
+      }
+
+      async function corruptSwfAssets(file) {
+        const strength = Number($("assetStrength").value) / 100;
+        const mode = $("assetMode").value;
+        const settings = {
+          strength,
+          style: $("assetStyle").value,
+          vectors: mode === "both" || mode === "vectors",
+          bitmaps: mode === "both" || mode === "bitmaps"
+        };
+        const stats = { vectorShapes: 0, vectorColors: 0, vectorEdges: 0, bitmapImages: 0 };
+        if (!settings.vectors && !settings.bitmaps) return { blob: file, stats, note: "No asset targets selected." };
+        const source = new Uint8Array(await file.arrayBuffer());
+        if (source.length < 12) return { blob: file, stats, note: "File too small for SWF header; original loaded." };
+        const signature = String.fromCharCode(source[0], source[1], source[2]);
+        if (signature === "ZWS") return { blob: file, stats, note: "ZWS/LZMA input: internal edits skipped; original loaded." };
+        if (signature !== "FWS" && signature !== "CWS") return { blob: file, stats, note: "Not a recognized FWS/CWS file; original loaded." };
+        const declaredLength = new DataView(source.buffer, source.byteOffset, source.byteLength).getUint32(4, true);
+        if (declaredLength < 12 || declaredLength > 180 * 1024 * 1024) return { blob: file, stats, note: "Invalid SWF length; original loaded." };
+        const version = source[3];
+        let body;
+        try {
+          body = signature === "CWS" ? await zlibTransform(source.slice(8), "inflate", 180 * 1024 * 1024) : source.slice(8);
+        } catch (_) {
+          return { blob: file, stats, note: "SWF decompression failed; original loaded." };
+        }
+        try {
+          const headerBits = new SwfBits(body, 0);
+          headerBits.skipRect();
+          headerBits.readU16();
+          headerBits.readU16();
+          const tagStart = headerBits.bit >> 3;
+          if (tagStart < 5 || tagStart >= body.length) throw new Error("Invalid movie header");
+          const transformed = await processSwfTags(body, tagStart, body.length, 0, version, settings, stats);
+          if (!stats.vectorShapes && !stats.bitmapImages) return { blob: file, stats, note: "No supported internal assets found; original loaded." };
+          const finalBody = bytesJoin([body.slice(0, tagStart), transformed]);
+          const output = new Uint8Array(8 + finalBody.length);
+          output.set([70, 87, 83, version], 0);
+          new DataView(output.buffer).setUint32(4, output.length, true);
+          output.set(finalBody, 8);
+          return { blob: new Blob([output], { type: "application/x-shockwave-flash" }), stats, note: "SWF assets modified locally." };
+        } catch (error) {
+          console.warn("RTCFLE asset mutator skipped this SWF:", error);
+          return { blob: file, stats, note: "SWF structure unsupported or damaged; original loaded unchanged." };
+        }
+      }
+
       async function loadFile(file) {
         if (!file) return;
         if (!file.name.toLowerCase().endsWith(".swf")) {
@@ -324,8 +837,16 @@
         }
 
         $("fileName").textContent = file.name + "  ·  " + (file.size / 1024 / 1024).toFixed(2) + " MB";
-        setStatus("LOADING SWF...");
+        setStatus("PROCESSING INTERNAL SWF ASSETS...");
         try {
+          let playbackBlob = file;
+          if ($("assetCorrupt").checked) {
+            const result = await corruptSwfAssets(file);
+            playbackBlob = result.blob;
+            $("assetReport").textContent = result.note + " · Vectors: " + result.stats.vectorShapes + " shapes / " + result.stats.vectorEdges + " edges / " + result.stats.vectorColors + " colors · Images: " + result.stats.bitmapImages;
+          } else {
+            $("assetReport").textContent = "Internal asset mutator disabled · original SWF selected.";
+          }
           await rufflePromise;
           if (!player) {
             const api = window.RufflePlayer.newest();
@@ -341,7 +862,7 @@
           }
 
           if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
-          currentObjectUrl = URL.createObjectURL(file);
+          currentObjectUrl = URL.createObjectURL(playbackBlob);
           currentFile = file;
           emptyState.style.display = "none";
           $("fileState").textContent = "SWF LOADED";
@@ -476,6 +997,12 @@
       ["intensity", "hue", "contrast", "saturation", "scanlines", "noise", "jitter", "bars"].forEach((id) => {
         $(id).addEventListener("input", applyEffects);
         $(id).addEventListener("change", applyEffects);
+      });
+      $("assetStrength").addEventListener("input", () => {
+        $("assetStrengthValue").textContent = $("assetStrength").value + "%";
+      });
+      $("assetCorrupt").addEventListener("change", () => {
+        $("assetReport").textContent = $("assetCorrupt").checked ? "Asset mutator armed · reload a SWF to apply internal edits." : "Asset mutator disabled · reload a SWF to restore its original assets.";
       });
 
       const dropZone = $("dropZone");
