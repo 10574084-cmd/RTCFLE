@@ -562,4 +562,136 @@ patch("web/packages/core/src/internal/player/inner.tsx",
     ]);
 
 
-console.log("Patched pinned Ruffle source for classic mutation and live Vector Stretch.");
+
+
+// Live instance-level aspect-ratio warp. This edits the current display list,
+// not shared Graphic definitions, so Classic Mutation and Vector Stretch remain independent.
+patch("core/src/player.rs",
+    ["fn invalidate_vector_display_object<'gc>(object: DisplayObject<'gc>) {"],
+    [
+        "fn mutate_sprite_aspect_display_object<'gc>(",
+        "    object: DisplayObject<'gc>,",
+        "    seed: &mut u32,",
+        "    intensity: u8,",
+        "    glitch_chance: u8,",
+        ") -> u32 {",
+        "    let mut changed = 0;",
+        "    if object.as_stage().is_none() {",
+        "        let mut matrix = object.base().matrix();",
+        "        if crate::vector_mutation::mutate_sprite_aspect_matrix(",
+        "            &mut matrix, seed, intensity, glitch_chance,",
+        "        ) {",
+        "            object.set_matrix(matrix);",
+        "            object.invalidate_cached_bitmap();",
+        "            changed += 1;",
+        "        }",
+        "    }",
+        "    if let Some(container) = object.as_container() {",
+        "        for child in container.iter_render_list() {",
+        "            changed += mutate_sprite_aspect_display_object(",
+        "                child, seed, intensity, glitch_chance,",
+        "            );",
+        "        }",
+        "    }",
+        "    changed",
+        "}",
+        "",
+        "fn invalidate_vector_display_object<'gc>(object: DisplayObject<'gc>) {"
+    ]);
+
+patch("core/src/player.rs",
+    ["    pub fn mutate_with_update_context<F, R>(&mut self, f: F) -> R"],
+    [
+        "    /// Mutates live display-object instance matrices to produce wide/tall sprite aspect warps.",
+        "    /// This does not rewrite shared shapes or reload the SWF.",
+        "    pub fn mutate_sprite_aspect_warp(",
+        "        &mut self,",
+        "        intensity: u8,",
+        "        glitch_chance: u8,",
+        "        seed: u32,",
+        "    ) -> u32 {",
+        "        self.mutate_with_update_context(|context| {",
+        "            let mut seed = seed;",
+        "            let changed = mutate_sprite_aspect_display_object(",
+        "                context.stage.into(), &mut seed, intensity, glitch_chance,",
+        "            );",
+        "            if changed > 0 {",
+        "                *context.needs_render = true;",
+        "            }",
+        "            changed",
+        "        })",
+        "    }",
+        "",
+        "    pub fn mutate_with_update_context<F, R>(&mut self, f: F) -> R"
+    ]);
+
+patch("web/src/lib.rs",
+    [
+        "    pub fn mutate_vector_stretch(&self, intensity: u8, seed: u32) -> u32 {",
+        "        self.with_core_mut(|core| core.mutate_vector_stretch(intensity, seed))",
+        "            .unwrap_or_default()",
+        "    }"
+    ],
+    [
+        "    pub fn mutate_vector_stretch(&self, intensity: u8, seed: u32) -> u32 {",
+        "        self.with_core_mut(|core| core.mutate_vector_stretch(intensity, seed))",
+        "            .unwrap_or_default()",
+        "    }",
+        "",
+        "    /// Applies aspect-ratio and matrix glitches to the current live sprite instances.",
+        "    pub fn mutate_sprite_aspect_warp(&self, intensity: u8, glitch_chance: u8, seed: u32) -> u32 {",
+        "        self.with_core_mut(|core| core.mutate_sprite_aspect_warp(intensity, glitch_chance, seed))",
+        "            .unwrap_or_default()",
+        "    }"
+    ]);
+
+patch("web/packages/core/src/public/player/v1.ts",
+    ["    mutateVectorStretch(intensity: number, seed: number): number;"],
+    [
+        "    mutateVectorStretch(intensity: number, seed: number): number;",
+        "    /** Randomly stretches live sprite instance aspect ratios and adds optional matrix glitches. */",
+        "    mutateSpriteAspectWarp(intensity: number, glitchChance: number, seed: number): number;"
+    ]);
+
+patch("web/packages/core/src/internal/player/impl_v1.ts",
+    [
+        "    mutateVectorStretch(intensity: number, seed: number): number {",
+        "        return this.#inner.mutateVectorStretch(intensity, seed);",
+        "    }"
+    ],
+    [
+        "    mutateVectorStretch(intensity: number, seed: number): number {",
+        "        return this.#inner.mutateVectorStretch(intensity, seed);",
+        "    }",
+        "",
+        "    mutateSpriteAspectWarp(intensity: number, glitchChance: number, seed: number): number {",
+        "        return this.#inner.mutateSpriteAspectWarp(intensity, glitchChance, seed);",
+        "    }"
+    ]);
+
+patch("web/packages/core/src/internal/player/inner.tsx",
+    [
+        "    mutateVectorStretch(intensity: number, seed: number): number {",
+        "        if (!this.instance) return 0;",
+        "        const safeIntensity = Math.max(1, Math.min(100, Math.round(intensity)));",
+        "        return this.instance.mutate_vector_stretch(safeIntensity, seed >>> 0);",
+        "    }"
+    ],
+    [
+        "    mutateVectorStretch(intensity: number, seed: number): number {",
+        "        if (!this.instance) return 0;",
+        "        const safeIntensity = Math.max(1, Math.min(100, Math.round(intensity)));",
+        "        return this.instance.mutate_vector_stretch(safeIntensity, seed >>> 0);",
+        "    }",
+        "",
+        "    mutateSpriteAspectWarp(intensity: number, glitchChance: number, seed: number): number {",
+        "        if (!this.instance) return 0;",
+        "        const safeIntensity = Math.max(1, Math.min(100, Math.round(intensity)));",
+        "        const safeGlitchChance = Math.max(0, Math.min(100, Math.round(glitchChance)));",
+        "        return this.instance.mutate_sprite_aspect_warp(safeIntensity, safeGlitchChance, seed >>> 0);",
+        "    }"
+    ]);
+
+
+console.log("Patched pinned Ruffle source for classic mutation, Vector Stretch, and Sprite Aspect Warp.");
+
