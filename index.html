@@ -349,10 +349,10 @@
       let previewTransitionHold = false;
       let previewRecorder = null;
       let previewChunks = [];
-      let previewCaptureCanvas = null;
-      let previewCaptureContext = null;
+      let previewCaptureVideo = null;
+      let previewSourceStream = null;
       let previewCaptureStream = null;
-      let previewCaptureFrame = 0;
+      let previewCaptureAudioTracks = [];
       let liveMutationPending = false;
 
       window.RufflePlayer = window.RufflePlayer || {};
@@ -408,11 +408,32 @@
           .sort((a, b) => (b.width * b.height) - (a.width * a.height))[0] || null;
       }
 
+      function attachPreviewCaptureSource() {
+        const source = findPreviewCanvas();
+        if (!source || !previewCaptureVideo) return false;
+        try {
+          const nextSourceStream = source.captureStream(30);
+          const oldSourceStream = previewSourceStream;
+          previewSourceStream = nextSourceStream;
+          previewCaptureVideo.width = source.width;
+          previewCaptureVideo.height = source.height;
+          previewCaptureVideo.srcObject = nextSourceStream;
+          const playResult = previewCaptureVideo.play();
+          if (playResult && typeof playResult.catch === "function") playResult.catch(() => {});
+          if (oldSourceStream) oldSourceStream.getTracks().forEach((track) => track.stop());
+          return true;
+        } catch (error) {
+          console.warn("RTCFLE could not attach the current Ruffle canvas:", error);
+          return false;
+        }
+      }
+
       function startPreviewRecording() {
         if (previewRecorder) return;
-        if (typeof MediaRecorder === "undefined" || !HTMLCanvasElement.prototype.captureStream) {
+        if (typeof MediaRecorder === "undefined" || !HTMLCanvasElement.prototype.captureStream ||
+            !HTMLVideoElement.prototype.captureStream) {
           $("recordStatus").textContent = "RECORDER: NOT SUPPORTED";
-          $("liveCorruptStatus").textContent = "This browser does not support direct preview capture with MediaRecorder/canvas capture.";
+          $("liveCorruptStatus").textContent = "This browser does not support persistent Ruffle capture.";
           return;
         }
         const source = findPreviewCanvas();
@@ -421,14 +442,26 @@
           return;
         }
         try {
-          // Capture Ruffle's own WebGL/Canvas surface directly. Do not copy it
-          // through a 2D canvas: WebGL drawing buffers may be cleared after
-          // presentation, which causes flicker and black frames on readback.
-          previewCaptureStream = source.captureStream(30);
+          // A stable video element is the recorder's source. When Ruffle reloads
+          // and replaces its canvas, only the video's input stream is swapped;
+          // the MediaRecorder's own video track remains alive.
+          previewCaptureVideo = document.createElement("video");
+          previewCaptureVideo.muted = true;
+          previewCaptureVideo.autoplay = true;
+          previewCaptureVideo.playsInline = true;
+          previewCaptureVideo.style.cssText = "position:fixed;left:-10000px;top:0;width:1px;height:1px;opacity:0;pointer-events:none";
+          document.body.appendChild(previewCaptureVideo);
+          if (!attachPreviewCaptureSource()) throw new Error("Could not capture the Ruffle canvas.");
+          previewCaptureStream = previewCaptureVideo.captureStream(30);
           const audioStream = window.__RTCFLE_AUDIO_STREAM;
+          previewCaptureAudioTracks = [];
           if (audioStream && audioStream.getAudioTracks) {
             audioStream.getAudioTracks().forEach((track) => {
-              if (track.readyState === "live") previewCaptureStream.addTrack(track.clone());
+              if (track.readyState === "live") {
+                const clone = track.clone();
+                previewCaptureStream.addTrack(clone);
+                previewCaptureAudioTracks.push(clone);
+              }
             });
           }
           const hasAudio = previewCaptureStream.getAudioTracks().length > 0;
@@ -455,7 +488,7 @@
               const url = URL.createObjectURL(blob);
               const anchor = document.createElement("a");
               anchor.href = url;
-              anchor.download = "RTCFLE-preview-" + new Date().toISOString().replace(/[:.]/g, "-") + ".webm";
+              anchor.download = "RTCFLE-fullscreen-" + new Date().toISOString().replace(/[:.]/g, "-") + ".webm";
               document.body.appendChild(anchor);
               anchor.click();
               anchor.remove();
@@ -464,9 +497,18 @@
             } else {
               $("recordStatus").textContent = "RECORDER: EMPTY CLIP";
             }
+            if (previewSourceStream) previewSourceStream.getTracks().forEach((track) => track.stop());
             if (previewCaptureStream) previewCaptureStream.getTracks().forEach((track) => track.stop());
-            previewRecorder = null;
+            previewCaptureAudioTracks = [];
+            previewSourceStream = null;
             previewCaptureStream = null;
+            if (previewCaptureVideo) {
+              previewCaptureVideo.pause();
+              previewCaptureVideo.srcObject = null;
+              previewCaptureVideo.remove();
+              previewCaptureVideo = null;
+            }
+            previewRecorder = null;
             previewChunks = [];
             $("recordPreviewButton").textContent = "● Record preview";
             $("recordPreviewButton").classList.remove("recording");
@@ -476,12 +518,19 @@
           $("recordPreviewButton").textContent = "■ Stop & save recording";
           $("recordPreviewButton").classList.add("recording");
           $("recordStatus").textContent = hasAudio
-            ? "RECORDER: PREVIEW + SWF AUDIO"
-            : "RECORDER: PREVIEW (AUDIO STREAM NOT READY)";
+            ? "RECORDER: RUFFLE VIEW + SWF AUDIO"
+            : "RECORDER: RUFFLE VIEW (AUDIO STREAM NOT READY)";
         } catch (error) {
           console.error("RTCFLE could not start preview recording:", error);
+          if (previewSourceStream) previewSourceStream.getTracks().forEach((track) => track.stop());
           if (previewCaptureStream) previewCaptureStream.getTracks().forEach((track) => track.stop());
+          if (previewCaptureVideo) {
+            previewCaptureVideo.srcObject = null;
+            previewCaptureVideo.remove();
+            previewCaptureVideo = null;
+          }
           previewRecorder = null;
+          previewSourceStream = null;
           previewCaptureStream = null;
           $("recordStatus").textContent = "RECORDER: START FAILED";
         }
@@ -1286,6 +1335,7 @@
           $("stopButton").disabled = false;
           $("liveMutateButton").disabled = false;
           await player.ruffle().load(currentObjectUrl);
+          if (previewRecorder) attachPreviewCaptureSource();
           previewTransitionHold = false;
           if (hasMutations && $("autoRecordCorruption").checked && !previewRecorder) {
             startPreviewRecording();
@@ -1404,6 +1454,7 @@
               const oldUrl = currentObjectUrl;
               currentObjectUrl = URL.createObjectURL(audioResult.blob);
               await player.ruffle().load(currentObjectUrl);
+              if (previewRecorder) attachPreviewCaptureSource();
               if (oldUrl) URL.revokeObjectURL(oldUrl);
               currentPlaybackBlob = audioResult.blob;
               currentMutatedBlob = audioResult.blob;
