@@ -990,5 +990,97 @@ patch("web/packages/core/src/internal/player/inner.tsx",
     ]);
 
 
+
+// Expose Ruffle's actual WebAudio output as a MediaStream so preview recordings
+// can include SWF audio without trying to tap the device speakers.
+patch("web/Cargo.toml",
+    ['    "TextMetrics", "OffscreenCanvasRenderingContext2d"'],
+    ['    "TextMetrics", "OffscreenCanvasRenderingContext2d", "MediaStream", "MediaStreamAudioDestinationNode"']);
+
+patch("web/src/audio.rs",
+    [
+        "use web_sys::{AudioContext, AudioContextOptions, AudioScheduledSourceNode};"
+    ],
+    [
+        "use web_sys::{AudioContext, AudioContextOptions, AudioScheduledSourceNode, MediaStreamAudioDestinationNode};"
+    ]);
+
+patch("web/src/audio.rs",
+    [
+        "    context: AudioContext,",
+        "    /// The current length of both buffers, in frames (pairs of left/right samples)."
+    ],
+    [
+        "    context: AudioContext,",
+        "    recording_destination: MediaStreamAudioDestinationNode,",
+        "    /// The current length of both buffers, in frames (pairs of left/right samples)."
+    ]);
+
+patch("web/src/audio.rs",
+    [
+        "        let context = AudioContext::new_with_context_options(&opts).into_js_result()?;",
+        "        let sample_rate = context.sample_rate();"
+    ],
+    [
+        "        let context = AudioContext::new_with_context_options(&opts).into_js_result()?;",
+        "        let recording_destination = context.create_media_stream_destination().into_js_result()?;",
+        "        let _ = js_sys::Reflect::set(",
+        "            &js_sys::global(),",
+        "            &JsValue::from_str(\"__RTCFLE_AUDIO_STREAM\"),",
+        "            &recording_destination.stream(),",
+        "        );",
+        "        let sample_rate = context.sample_rate();"
+    ]);
+
+patch("web/src/audio.rs",
+    [
+        "            context,",
+        "            mixer: AudioMixer::new(2, sample_rate as u32),"
+    ],
+    [
+        "            context,",
+        "            recording_destination,",
+        "            mixer: AudioMixer::new(2, sample_rate as u32),"
+    ]);
+
+patch("web/src/audio.rs",
+    [
+        "    context: AudioContext,",
+        "    mixer_proxy: AudioMixerProxy,"
+    ],
+    [
+        "    context: AudioContext,",
+        "    recording_destination: MediaStreamAudioDestinationNode,",
+        "    mixer_proxy: AudioMixerProxy,"
+    ]);
+
+patch("web/src/audio.rs",
+    [
+        "            context: audio.context.clone(),",
+        "            mixer_proxy: audio.mixer.proxy(),"
+    ],
+    [
+        "            context: audio.context.clone(),",
+        "            recording_destination: audio.recording_destination.clone(),",
+        "            mixer_proxy: audio.mixer.proxy(),"
+    ]);
+
+patch("web/src/audio.rs",
+    [
+        "        audio_node",
+        "            .connect_with_audio_node(&self.context.destination())",
+        "            .into_js_result()?;",
+        "        let scheduled: &AudioScheduledSourceNode = &audio_node;"
+    ],
+    [
+        "        audio_node",
+        "            .connect_with_audio_node(&self.context.destination())",
+        "            .into_js_result()?;",
+        "        audio_node",
+        "            .connect_with_audio_node(&self.recording_destination)",
+        "            .into_js_result()?;",
+        "        let scheduled: &AudioScheduledSourceNode = &audio_node;"
+    ]);
+
 console.log("Patched pinned Ruffle source for classic mutation, Vector Stretch, Sprite Aspect Warp, twenty vector effects, and live appearance controls.");
 
