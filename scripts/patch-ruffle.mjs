@@ -1082,5 +1082,44 @@ patch("web/src/audio.rs",
         "        let scheduled: &AudioScheduledSourceNode = &audio_node;"
     ]);
 
-console.log("Patched pinned Ruffle source for classic mutation, Vector Stretch, Sprite Aspect Warp, twenty vector effects, and live appearance controls.");
+patch("web/src/audio.rs",
+    [
+        "        // Mix new audio into the output buffer and copy to JS.",
+        "        self.mixer_proxy.mix(&mut self.audio_buffer);",
+        "        copy_to_audio_buffer_interleaved(&self.js_buffer, &self.audio_buffer);"
+    ],
+    [
+        "        // Mix new audio into the output buffer.",
+        "        self.mixer_proxy.mix(&mut self.audio_buffer);",
+        "",
+        "        // RTCFLE live audio corruption: mutate mixed samples before WebAudio.",
+        "        // This operates on the current audio stream and never reloads the SWF.",
+        "        let live_audio = js_sys::Reflect::get(&js_sys::global(), &JsValue::from_str(\"__RTCFLE_AUDIO_LIVE\")).unwrap_or(JsValue::NULL);",
+        "        let live_enabled = js_sys::Reflect::get(&live_audio, &JsValue::from_str(\"enabled\")).ok().and_then(|v| v.as_bool()).unwrap_or(false);",
+        "        if live_enabled {",
+        "            let strength = js_sys::Reflect::get(&live_audio, &JsValue::from_str(\"strength\")).ok().and_then(|v| v.as_f64()).unwrap_or(0.32).clamp(0.0, 1.0) as f32;",
+        "            let style = js_sys::Reflect::get(&live_audio, &JsValue::from_str(\"style\")).ok().and_then(|v| v.as_string()).unwrap_or_else(|| \"hybrid\".to_string());",
+        "            let seed = js_sys::Reflect::get(&live_audio, &JsValue::from_str(\"seed\")).ok().and_then(|v| v.as_f64()).unwrap_or(1.0) as u32;",
+        "            for (i, sample) in self.audio_buffer.iter_mut().enumerate() {",
+        "                let mut x = seed.wrapping_add((i as u32).wrapping_mul(0x9E3779B9)).wrapping_add((self.time.get() * 44100.0) as u32);",
+        "                x ^= x >> 16;",
+        "                x = x.wrapping_mul(0x7FEB352D);",
+        "                x ^= x >> 15;",
+        "                x = x.wrapping_mul(0x846CA68B);",
+        "                x ^= x >> 16;",
+        "                let noise = (x as f32 / u32::MAX as f32) * 2.0 - 1.0;",
+        "                match style.as_str() {",
+        "                    \"dropouts\" => { if noise.abs() > 1.0 - (strength * 0.18) { *sample = 0.0; } }",
+        "                    \"static\" => { *sample = (*sample * (1.0 - strength)) + (noise * strength * 0.75); }",
+        "                    \"bitcrush\" => { let bits = (12.0 - strength * 10.0).max(2.0); let levels = 2.0_f32.powf(bits); *sample = ((*sample * levels).round() / levels).clamp(-1.0, 1.0); }",
+        "                    _ => { let bits = (15.0 - strength * 11.0).max(3.0); let levels = 2.0_f32.powf(bits); let crushed = (*sample * levels).round() / levels; *sample = (crushed * (1.0 - strength * 0.55) + noise * strength * 0.35).clamp(-1.0, 1.0); }",
+        "                }",
+        "            }",
+        "        }",
+        "",
+        "        // Copy processed samples to both playback and RTCFLE's recording stream.",
+        "        copy_to_audio_buffer_interleaved(&self.js_buffer, &self.audio_buffer);"
+    ]);
+
+console.log("Patched pinned Ruffle source for vector mutations, live appearance controls, and in-place live audio corruption.");
 
