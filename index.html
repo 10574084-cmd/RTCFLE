@@ -313,6 +313,48 @@
               </div>
               <p class="tiny" style="margin:9px 0 0;line-height:1.5">Scales live sprite instances wider or taller; extra glitches can flip, shear, shift or nearly collapse a sprite.</p>
             </div>
+            <div id="textCorruptionSettings" style="margin-top:14px;padding:12px;border:1px solid #29394b;border-radius:9px;background:rgba(255,255,255,.025)">
+              <div class="control-heading"><strong>TEXT CORRUPTION</strong><span class="tiny">RUNTIME TEXT + FONT</span></div>
+              <label class="toggle">Live Text Corruption <input type="checkbox" id="liveTextCorruption"></label>
+              <div style="margin-top:10px">
+                <label class="range-label" for="textMode">Text content corruption mode</label>
+                <select id="textMode" style="width:100%;padding:9px;border-radius:8px;background:#111c29;color:#dce8f6;border:1px solid #34465a">
+                  <option value="0">Character Scramble</option>
+                  <option value="1">Random Symbols</option>
+                  <option value="2">Alternating Case</option>
+                  <option value="3">Character Echo</option>
+                  <option value="4">Reverse Text</option>
+                  <option value="5">Vowel Mutation</option>
+                  <option value="6">Glitch Injection</option>
+                  <option value="7">Missing Characters</option>
+                  <option value="8">Zalgo Glitch</option>
+                  <option value="9">Leetspeak</option>
+                  <option value="10">Random Letter Swap</option>
+                  <option value="11">Word Scramble</option>
+                  <option value="12">Binary Text</option>
+                  <option value="13">Repeated Words</option>
+                  <option value="14">Unicode Noise</option>
+                  <option value="15">ALL TEXT MODES</option>
+                </select>
+              </div>
+              <div style="margin-top:10px">
+                <label class="range-label" for="fontMode">Font corruption mode</label>
+                <select id="fontMode" style="width:100%;padding:9px;border-radius:8px;background:#111c29;color:#dce8f6;border:1px solid #34465a">
+                  <option value="0">No font change</option>
+                  <option value="1">Font Replacement</option>
+                  <option value="2">Bold / Italic Chaos</option>
+                  <option value="3">Font Size Chaos</option>
+                  <option value="4">Letter Spacing Chaos</option>
+                  <option value="5">ALL FONT EFFECTS</option>
+                </select>
+              </div>
+              <div class="range-row" style="margin-top:10px;margin-bottom:10px">
+                <div><label class="range-label" for="textStrength">Text corruption strength</label><input type="range" id="textStrength" min="1" max="100" value="55"></div>
+                <span class="range-value" id="textStrengthValue">55%</span>
+              </div>
+              <button class="btn" id="corruptTextButton" style="width:100%">✦ CORRUPT TEXT NOW</button>
+              <p id="textCorruptStatus" class="tiny" style="margin:9px 0 0;line-height:1.5">Text corruption targets live editable text fields. Static baked-in text may require separate glyph-level support.</p>
+            </div>
             <p id="liveCorruptStatus" class="tiny" style="margin:13px 0 0;line-height:1.6">LIVE MUTATION: choose a runtime mode. Changes apply to the current movie without reloading it.</p>
             <p id="assetReport" class="tiny" style="margin:11px 0 0;line-height:1.6">Asset mutator: armed · source file stays untouched</p>
           </div>
@@ -1473,6 +1515,41 @@
         }
       }
       $("liveMutateButton").addEventListener("click", runLiveMutation);
+      let liveTextTimer = null;
+      function applyLiveTextCorruption() {
+        if (!player || !currentFile) return;
+        try {
+          const seed = new Uint32Array(1);
+          if (window.crypto && window.crypto.getRandomValues) window.crypto.getRandomValues(seed);
+          else seed[0] = Math.floor(Math.random() * 0xFFFFFFFF);
+          const changed = player.ruffle().mutateTextRuntime(
+            Number($("textMode").value),
+            Number($("fontMode").value),
+            Number($("textStrength").value),
+            seed[0]
+          );
+          $("textCorruptStatus").textContent = "TEXT CORRUPTION · " + changed + " live text fields processed · " +
+            $("textMode").selectedOptions[0].text + " · " + $("fontMode").selectedOptions[0].text;
+          setStatus("TEXT CORRUPTION: " + changed + " FIELDS");
+        } catch (error) {
+          console.error("RTCFLE text corruption failed:", error);
+          $("textCorruptStatus").textContent = "TEXT CORRUPTION FAILED: " + (error && error.message ? error.message : "unknown error");
+        }
+      }
+      $("corruptTextButton").addEventListener("click", applyLiveTextCorruption);
+      $("liveTextCorruption").addEventListener("change", () => {
+        if (liveTextTimer) { clearInterval(liveTextTimer); liveTextTimer = null; }
+        if ($("liveTextCorruption").checked) {
+          applyLiveTextCorruption();
+          liveTextTimer = setInterval(applyLiveTextCorruption, 1800);
+          $("textCorruptStatus").textContent += " · LIVE ACTIVE";
+        } else {
+          $("textCorruptStatus").textContent = "LIVE TEXT CORRUPTION OFF";
+        }
+      });
+      $("textStrength").addEventListener("input", () => {
+        $("textStrengthValue").textContent = $("textStrength").value + "%";
+      });
       function isTypingInTextControl(event) {
         const path = typeof event.composedPath === "function" ? event.composedPath() : [event.target];
         return path.some((node) => {
