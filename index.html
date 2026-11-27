@@ -172,7 +172,7 @@
           <button class="btn" id="exportButton" disabled>↓ Export corrupted SWF</button>
           <button class="btn" id="liveMutateButton" title="Keyboard shortcut: L" disabled>⌁ Mutate live [L]</button>
           <button class="btn" id="fullscreenButton" type="button">⛶ Fullscreen preview</button>
-          <button class="btn" id="recordPreviewButton" type="button">● Record preview</button>
+          <button class="btn" id="recordPreviewButton" type="button" title="Record only the Flash preview, without the page controls. Recording continues through reloads and SWF switches; stop to save a WebM.">● Record preview</button>
           <input type="file" id="fileInput" accept=".swf,application/x-shockwave-flash">
         </div>
         <div class="upload-zone" id="dropZone">
@@ -1348,7 +1348,7 @@
       });
       $("reloadButton").addEventListener("click", () => { if (currentFile) loadFile(currentFile); });
       $("stopButton").addEventListener("click", unloadFile);
-      function applyLiveMutation() {
+      function applyLiveMutation(audioWasApplied = false) {
         if (!player || !currentFile) return;
         const mode = $("liveMode").value;
         const isVectorEffect = mode.startsWith("vector-");
@@ -1392,7 +1392,10 @@
           const appearanceSummary = mode === "aspect" ? "" :
             " · colors " + (corruptColors ? "ON" : "OFF") + " · cartoon " + (cartoonize ? "ON" : "OFF") +
             " · extra geometry effects " + document.querySelectorAll(".vectorDamage:checked").length;
-          $("liveCorruptStatus").textContent = "LIVE · " + modeName + ": " + changed + " live instances/fields changed" + appearanceSummary + ". The movie was not reloaded.";
+          const reloadNote = audioWasApplied
+            ? ". The preview was reloaded to apply embedded audio corruption."
+            : ". The movie was not reloaded.";
+          $("liveCorruptStatus").textContent = "LIVE · " + modeName + ": " + changed + " live instances/fields changed" + appearanceSummary + reloadNote;
           setStatus(modeName + ": " + changed + " LIVE CHANGES");
         } catch (error) {
           console.error("RTCFLE live mutation failed:", error);
@@ -1406,6 +1409,7 @@
         liveMutationPending = true;
         $("liveMutateButton").disabled = true;
         let audioNote = "";
+        let audioWasApplied = false;
         try {
           if ($("audioCorrupt").checked) {
             const sourceBlob = currentPlaybackBlob || currentFile;
@@ -1418,6 +1422,7 @@
               if (oldUrl) URL.revokeObjectURL(oldUrl);
               currentPlaybackBlob = audioResult.blob;
               currentMutatedBlob = audioResult.blob;
+              audioWasApplied = true;
               $("exportButton").disabled = false;
               $("assetReport").textContent = "Live audio corruption applied · " +
                 audioResult.stats.audioClips + " audio clips / " + audioResult.stats.audioBytes + " bytes changed. " +
@@ -1427,13 +1432,13 @@
               audioNote = "audio option is ON, but no supported embedded audio clips were changed";
             }
           }
-          applyLiveMutation();
+          applyLiveMutation(audioWasApplied);
           if (audioNote) $("liveCorruptStatus").textContent += " · " + audioNote;
         } catch (error) {
           console.error("RTCFLE live audio corruption failed:", error);
           $("liveCorruptStatus").textContent = "LIVE AUDIO CORRUPTION FAILED: " +
             (error && error.message ? error.message : "unknown error");
-          applyLiveMutation();
+          applyLiveMutation(audioWasApplied);
         } finally {
           previewTransitionHold = false;
           liveMutationPending = false;
