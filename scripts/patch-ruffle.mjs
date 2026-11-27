@@ -1143,8 +1143,7 @@ patch("core/src/player.rs",
         "                        for ch in original.chars() {",
         "                            count += 1;",
         "                            let roll = seed.wrapping_add(count as u32 * 0x9E3779B9);",
-        "                            let symbol = ['#', '%', '@', '
-
+        "                            let symbol = ['#', '%', '@', '$', '?', '!', '*', 'X', '+', '='][(roll as usize) % 10];",
 , '?', '!', '*', '▓', '▒', '░'][(roll as usize) % 10];",
         "                            match mode {",
         "                                0 => output.push(if roll % 3 == 0 { symbol } else { ch }),",
