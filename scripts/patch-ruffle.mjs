@@ -1121,5 +1121,121 @@ patch("web/src/audio.rs",
         "        copy_to_audio_buffer_interleaved(&self.js_buffer, &self.audio_buffer);"
     ]);
 
-console.log("Patched pinned Ruffle source for vector mutations, live appearance controls, and in-place live audio corruption.");
+
+// RTCFLE runtime text and font corruption for active EditText objects.
+patch("core/src/player.rs",
+    ["use crate::string::{AvmString, AvmStringInterner, StringContext};"],
+    ["use crate::string::{AvmString, AvmStringInterner, StringContext, WString};"]);
+
+patch("core/src/player.rs",
+    ["    pub fn mutate_sprite_aspect_warp("],
+    [
+        "    /// Corrupts live editable text fields and their default font formatting.",
+        "    pub fn mutate_text_runtime(&mut self, text_mode: u8, font_mode: u8, strength: u8, seed: u32) -> u32 {",
+        "        self.mutate_with_update_context(|context| {",
+        "            fn visit<'gc>(object: DisplayObject<'gc>, context: &mut UpdateContext<'gc>, text_mode: u8, font_mode: u8, strength: u8, seed: &mut u32, changed: &mut u32) {",
+        "                if let Some(edit) = object.as_edit_text() {",
+        "                    let original = edit.text().to_string();",
+        "                    if !original.is_empty() {",
+        "                        let mut output = String::new();",
+        "                        let mode = if text_mode == 15 { (*seed % 15) as u8 } else { text_mode.min(14) };",
+        "                        let mut count = 0usize;",
+        "                        for ch in original.chars() {",
+        "                            count += 1;",
+        "                            let roll = seed.wrapping_add(count as u32 * 0x9E3779B9);",
+        "                            let symbol = ['#', '%', '@', '
+
+, '?', '!', '*', '▓', '▒', '░'][(roll as usize) % 10];",
+        "                            match mode {",
+        "                                0 => output.push(if roll % 3 == 0 { symbol } else { ch }),",
+        "                                1 => output.push(if roll % 3 == 0 { symbol } else { ch }),",
+        "                                2 => output.push(if count % 2 == 0 { ch.to_ascii_uppercase() } else { ch.to_ascii_lowercase() }),",
+        "                                3 => { output.push(ch); if roll % 3 == 0 { output.push(ch); } },",
+        "                                4 => {},",
+        "                                5 => output.push(match ch.to_ascii_lowercase() { 'a' => '4', 'e' => '3', 'i' => '1', 'o' => '0', 'u' => 'ü', _ => ch }),",
+        "                                6 => { output.push(ch); if roll % 4 == 0 { output.push(symbol); } },",
+        "                                7 => { if roll % 4 != 0 { output.push(ch); } },",
+        "                                8 => { output.push(ch); if roll % 3 == 0 { output.push('\u{0336}'); } },",
+        "                                9 => output.push(match ch.to_ascii_lowercase() { 'a' => '4', 'e' => '3', 'i' => '1', 'o' => '0', 's' => '5', 't' => '7', _ => ch }),",
+        "                                10 => output.push(if roll % 5 == 0 && ch.is_ascii_alphabetic() { symbol } else { ch }),",
+        "                                11 => output.push(ch),",
+        "                                12 => output.push_str(if ch.is_ascii_whitespace() { " " } else if ch.is_ascii() { if (ch as u8) & 1 == 0 { "0" } else { "1" } } else { "?" }),",
+        "                                13 => { output.push(ch); if ch.is_ascii_whitespace() && roll % 2 == 0 { output.push_str(" AGAIN "); } },",
+        "                                _ => output.push(if roll % 4 == 0 { 'Ж' } else { ch }),",
+        "                            }",
+        "                        }",
+        "                        if mode == 4 { output = original.chars().rev().collect(); }",
+        "                        if mode == 11 { output = original.split_whitespace().rev().collect::<Vec<_>>().join(" "); }",
+        "                        if output != original { edit.set_text(&WString::from_utf8(&output), context); }",
+        "                        let mut format = edit.new_text_format();",
+        "                        let fm = if font_mode == 5 { ((*seed >> 8) % 5 + 1) as u8 } else { font_mode.min(4) };",
+        "                        match fm {",
+        "                            1 => { let fonts = ["Arial", "Courier New", "Impact", "Comic Sans MS", "Times New Roman", "Verdana"]; format.font = Some(WString::from_utf8(fonts[(*seed as usize) % fonts.len()])); },",
+        "                            2 => { format.bold = Some(*seed & 1 == 0); format.italic = Some(*seed & 2 == 0); format.underline = Some(*seed & 4 == 0); },",
+        "                            3 => { format.size = Some((8 + ((*seed >> 4) % 48)) as f64); },",
+        "                            4 => { format.letter_spacing = Some((((*seed >> 5) % 15) as f64) - 5.0); },",
+        "                            _ => {},",
+        "                        }",
+        "                        if fm > 0 { edit.set_new_text_format(format); edit.force_next_text_update(); let current = edit.text(); edit.set_text(&current, context); }",
+        "                        *changed += 1;",
+        "                    }",
+        "                }",
+        "                if let Some(container) = object.as_container() {",
+        "                    let children = container.iter_render_list().collect::<Vec<_>>();",
+        "                    for child in children { visit(child, context, text_mode, font_mode, strength, seed, changed); }",
+        "                }",
+        "            }",
+        "            let mut changed = 0;",
+        "            let mut seed = seed;",
+        "            visit(context.stage.into(), context, text_mode, font_mode, strength, &mut seed, &mut changed);",
+        "            if changed > 0 { *context.needs_render = true; }",
+        "            changed",
+        "        })",
+        "    }",
+        "",
+        "    pub fn mutate_sprite_aspect_warp("
+    ]);
+
+patch("web/src/lib.rs",
+    ["    pub fn mutate_sprite_aspect_warp(&self, intensity: u8, glitch_chance: u8, seed: u32) -> u32 {"],
+    [
+        "    pub fn mutate_text_runtime(&self, text_mode: u8, font_mode: u8, strength: u8, seed: u32) -> u32 {",
+        "        self.with_core_mut(|core| core.mutate_text_runtime(text_mode, font_mode, strength, seed)).unwrap_or_default()",
+        "    }",
+        "",
+        "    pub fn mutate_sprite_aspect_warp(&self, intensity: u8, glitch_chance: u8, seed: u32) -> u32 {"
+    ]);
+
+patch("web/packages/core/src/public/player/v1.ts",
+    ["    mutateSpriteAspectWarp(intensity: number, glitchChance: number, seed: number): number;"],
+    [
+        "    mutateSpriteAspectWarp(intensity: number, glitchChance: number, seed: number): number;",
+        "    mutateTextRuntime(textMode: number, fontMode: number, strength: number, seed: number): number;"
+    ]);
+
+patch("web/packages/core/src/internal/player/impl_v1.ts",
+    ["    mutateSpriteAspectWarp(intensity: number, glitchChance: number, seed: number): number {"],
+    [
+        "    mutateTextRuntime(textMode: number, fontMode: number, strength: number, seed: number): number {",
+        "        return this.#inner.mutateTextRuntime(textMode, fontMode, strength, seed);",
+        "    }",
+        "",
+        "    mutateSpriteAspectWarp(intensity: number, glitchChance: number, seed: number): number {"
+    ]);
+
+patch("web/packages/core/src/internal/player/inner.tsx",
+    ["    mutateSpriteAspectWarp(intensity: number, glitchChance: number, seed: number): number {"],
+    [
+        "    mutateTextRuntime(textMode: number, fontMode: number, strength: number, seed: number): number {",
+        "        if (!this.instance) return 0;",
+        "        const safeTextMode = Math.max(0, Math.min(15, Math.round(textMode)));",
+        "        const safeFontMode = Math.max(0, Math.min(5, Math.round(fontMode)));",
+        "        const safeStrength = Math.max(1, Math.min(100, Math.round(strength)));",
+        "        return this.instance.mutate_text_runtime(safeTextMode, safeFontMode, safeStrength, seed >>> 0);",
+        "    }",
+        "",
+        "    mutateSpriteAspectWarp(intensity: number, glitchChance: number, seed: number): number {"
+    ]);
+
+console.log("Patched pinned Ruffle source for vector, audio, and live text/font corruption.");
 
