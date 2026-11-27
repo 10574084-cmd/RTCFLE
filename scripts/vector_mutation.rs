@@ -822,14 +822,18 @@ fn effect_styles(
         // 16 — Gradient Inversion: reverse gradient stops and invert their positions.
         16 => {
             for fill in fills.iter_mut() {
-                changed += invert_gradient_fill(fill);
+                if should_change(seed, intensity) {
+                    changed += invert_gradient_fill(fill);
+                }
             }
             for line in lines.iter_mut() {
-                let mut fill = line.fill_style().clone();
-                let before = invert_gradient_fill(&mut fill);
-                if before > 0 {
-                    *line = line.clone().with_fill_style(fill);
-                    changed += before;
+                if should_change(seed, intensity) {
+                    let mut fill = line.fill_style().clone();
+                    let before = invert_gradient_fill(&mut fill);
+                    if before > 0 {
+                        *line = line.clone().with_fill_style(fill);
+                        changed += before;
+                    }
                 }
             }
         }
