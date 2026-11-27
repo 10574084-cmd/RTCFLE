@@ -188,6 +188,7 @@
           <div class="control-group">
             <div class="control-heading"><strong>SWF ASSET + LIVE MUTATOR</strong><span class="tiny">PRE-PLAY / RUNTIME</span></div>
             <label class="toggle">Corrupt internal assets <input type="checkbox" id="assetCorrupt" checked></label>
+            <label class="toggle" style="margin-top:9px">Disable auto-corrupt on startup <input type="checkbox" id="disableAutoCorrupt"></label>
             <label class="toggle" style="margin-top:9px">Corrupt embedded audio <input type="checkbox" id="audioCorrupt"></label>
             <div id="audioSettings" class="hidden" style="margin-top:11px;padding:11px;border:1px solid #29394b;border-radius:9px;background:rgba(255,255,255,.02)">
               <div class="range-row" style="margin-top:0">
@@ -1117,13 +1118,15 @@
         try {
           let playbackBlob = file;
           let hasMutations = false;
-          if ($("assetCorrupt").checked || $("audioCorrupt").checked) {
+          if (!$("disableAutoCorrupt").checked && ($("assetCorrupt").checked || $("audioCorrupt").checked)) {
             const result = await corruptSwfAssets(file);
             playbackBlob = result.blob;
             hasMutations = playbackBlob !== file;
             $("assetReport").textContent = result.note + " · Mode: " + ($("vectorMode").value === "stretch" ? "Vector Stretch" : "Classic Mutation") + " · Vector: " + result.stats.vectorShapes + " shapes, " + result.stats.vectorEdges + " edges, " + result.stats.vectorMoves + " moved points, " + result.stats.vectorLineWidths + " line widths, " + result.stats.vectorGradientStops + " gradient stops, " + result.stats.vectorMatrices + " matrices, " + result.stats.vectorColors + " colors · Images: " + result.stats.bitmapImages + " · Audio: " + result.stats.audioClips + " clips / " + result.stats.audioBytes + " bytes changed";
           } else {
-            $("assetReport").textContent = "Internal asset mutator disabled · original SWF selected.";
+            $("assetReport").textContent = $("disableAutoCorrupt").checked
+              ? "Auto-corrupt on startup disabled · original SWF loaded without automatic corruption."
+              : "Internal asset mutator disabled · original SWF selected.";
           }
           currentMutatedBlob = hasMutations ? playbackBlob : null;
           currentExportName = file.name.replace(/\.swf$/i, "") + ".rtcfle-corrupted.swf";
