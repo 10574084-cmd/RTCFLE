@@ -699,10 +699,18 @@ fn refract_bitmap_fill(fill: &mut FillStyle, seed: &mut u32, intensity: u8) -> u
         if should_change(seed, intensity) {
             let shear = offset(seed, intensity) as f32 / 90.0;
             let scale = 0.35 + (next(seed) % 180) as f32 / 100.0;
-            matrix.a = (matrix.a * scale).clamp(-1_000_000.0, 1_000_000.0);
-            matrix.d = (matrix.d / scale.max(0.1)).clamp(-1_000_000.0, 1_000_000.0);
-            matrix.b = (matrix.b + shear).clamp(-1_000_000.0, 1_000_000.0);
-            matrix.c = (matrix.c - shear).clamp(-1_000_000.0, 1_000_000.0);
+            matrix.a = swf::Fixed16::from_f32(
+                (matrix.a.to_f32() * scale).clamp(-1_000_000.0, 1_000_000.0),
+            );
+            matrix.d = swf::Fixed16::from_f32(
+                (matrix.d.to_f32() / scale.max(0.1)).clamp(-1_000_000.0, 1_000_000.0),
+            );
+            matrix.b = swf::Fixed16::from_f32(
+                (matrix.b.to_f32() + shear).clamp(-1_000_000.0, 1_000_000.0),
+            );
+            matrix.c = swf::Fixed16::from_f32(
+                (matrix.c.to_f32() - shear).clamp(-1_000_000.0, 1_000_000.0),
+            );
             matrix.tx = Twips::new(matrix.tx.get().saturating_add(offset(seed, intensity) * 45));
             matrix.ty = Twips::new(matrix.ty.get().saturating_sub(offset(seed, intensity) * 45));
             return 1;
