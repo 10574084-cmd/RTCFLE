@@ -511,8 +511,8 @@ pub(crate) fn mutate_sprite_aspect_matrix(
 }
 
 
-// Ten dedicated vector-only corruption passes. Modes 0-9 are selectable;
-// mode 10 runs all ten sequentially using one deterministic random stream.
+// Twenty dedicated vector-only corruption passes. Modes 0-19 are selectable;
+// mode 20 runs all twenty sequentially using one deterministic random stream.
 fn effect_pair(
     dx: &mut Twips,
     dy: &mut Twips,
@@ -590,9 +590,125 @@ fn effect_pair(
                 *dy = Twips::new(y.saturating_add(offset(seed, intensity).saturating_mul(12)));
             }
         },
+        // 10 — Angle Snap: align each edge to the nearest 45-degree direction.
+        10 => {
+            let length = ((x as f32 * x as f32) + (y as f32 * y as f32)).sqrt();
+            if length > 0.0 {
+                let step = std::f32::consts::FRAC_PI_4;
+                let angle = (y as f32).atan2(x as f32);
+                let snapped = (angle / step).round() * step;
+                *dx = Twips::new((length * snapped.cos()).clamp(-750_000.0, 750_000.0) as i32);
+                *dy = Twips::new((length * snapped.sin()).clamp(-750_000.0, 750_000.0) as i32);
+            }
+        }
+        // 11 — Edge Pinch: compress selected segments toward their start point.
+        11 => {
+            let factor = 0.20 + (next(seed) % 61) as f32 / 100.0;
+            *dx = Twips::new((x as f32 * factor) as i32);
+            *dy = Twips::new((y as f32 * factor) as i32);
+        }
+        // 12 — Axis Shear: skew horizontal and vertical edge components.
+        12 => {
+            let shear = offset(seed, intensity) as f32 / (120.0 + amp as f32 * 3.0);
+            let nx = (x as f32 + y as f32 * shear).clamp(-750_000.0, 750_000.0) as i32;
+            let ny = (y as f32 - x as f32 * shear * 0.45).clamp(-750_000.0, 750_000.0) as i32;
+            *dx = Twips::new(nx);
+            *dy = Twips::new(ny);
+        }
+        // 13 — Segment Tangle: cross-mix the axes on alternating edge records.
+        13 => {
+            if index % 2 == 0 {
+                *dx = Twips::new(y.saturating_add(offset(seed, intensity).saturating_mul(2)));
+                *dy = Twips::new(x.saturating_sub(offset(seed, intensity).saturating_mul(2)));
+            } else {
+                *dx = Twips::new(x.saturating_neg().saturating_add(offset(seed, intensity)));
+                *dy = Twips::new(y.saturating_neg().saturating_sub(offset(seed, intensity)));
+            }
+        }
+        // 14 — Stroke Pulse is handled in line-style data.
+        // 15 — Fill Bleed is handled in fill-style data.
+        // 16 — Gradient Inversion is handled in gradient data.
+        // 17 — Bitmap Refraction is handled in bitmap-fill matrices.
+        14..=17 => return 0,
+        // 18 — Contour Drift is handled on move-to records.
+        18 => return 0,
+        // 19 — Microfracture adds small, alternating spikes to edge segments.
+        19 => {
+            let spike = offset(seed, intensity).saturating_mul(1 + amp / 5);
+            if index % 2 == 0 {
+                *dx = Twips::new(x.saturating_add(spike));
+            } else {
+                *dy = Twips::new(y.saturating_sub(spike));
+            }
+        }
         _ => return 0,
     }
     1
+}
+
+fn mutate_fill_bleed(fill: &mut FillStyle, seed: &mut u32, intensity: u8) -> u32 {
+    let bleed = |color: &mut swf::Color, seed: &mut u32| -> u32 {
+        if !should_change(seed, intensity) { return 0; }
+        let amount = (1 + next(seed) % 96) as u8;
+        color.a = if next(seed) & 1 == 0 {
+            color.a.saturating_sub(amount)
+        } else {
+            color.a.saturating_add(amount)
+        };
+        1
+    };
+    match fill {
+        FillStyle::Color(color) => bleed(color, seed),
+        FillStyle::LinearGradient(gradient)
+        | FillStyle::RadialGradient(gradient)
+        | FillStyle::FocalGradient { gradient, .. } => {
+            let mut changed = 0;
+            for stop in &mut gradient.records {
+                changed += bleed(&mut stop.color, seed);
+            }
+            changed
+        }
+        FillStyle::Bitmap { matrix, .. } => {
+            if should_change(seed, intensity) {
+                matrix.tx = Twips::new(matrix.tx.get().saturating_add(offset(seed, intensity) * 90));
+                1
+            } else { 0 }
+        }
+    }
+}
+
+fn invert_gradient_fill(fill: &mut FillStyle) -> u32 {
+    let invert = |gradient: &mut Gradient| -> u32 {
+        if gradient.records.is_empty() { return 0; }
+        gradient.records.reverse();
+        for stop in &mut gradient.records {
+            stop.ratio = u8::MAX - stop.ratio;
+        }
+        gradient.records.len() as u32 + 1
+    };
+    match fill {
+        FillStyle::LinearGradient(gradient)
+        | FillStyle::RadialGradient(gradient)
+        | FillStyle::FocalGradient { gradient, .. } => invert(gradient),
+        _ => 0,
+    }
+}
+
+fn refract_bitmap_fill(fill: &mut FillStyle, seed: &mut u32, intensity: u8) -> u32 {
+    if let FillStyle::Bitmap { matrix, .. } = fill {
+        if should_change(seed, intensity) {
+            let shear = offset(seed, intensity) as f32 / 90.0;
+            let scale = 0.35 + (next(seed) % 180) as f32 / 100.0;
+            matrix.a = (matrix.a * scale).clamp(-1_000_000.0, 1_000_000.0);
+            matrix.d = (matrix.d / scale.max(0.1)).clamp(-1_000_000.0, 1_000_000.0);
+            matrix.b = (matrix.b + shear).clamp(-1_000_000.0, 1_000_000.0);
+            matrix.c = (matrix.c - shear).clamp(-1_000_000.0, 1_000_000.0);
+            matrix.tx = Twips::new(matrix.tx.get().saturating_add(offset(seed, intensity) * 45));
+            matrix.ty = Twips::new(matrix.ty.get().saturating_sub(offset(seed, intensity) * 45));
+            return 1;
+        }
+    }
+    0
 }
 
 fn effect_styles(
@@ -606,7 +722,7 @@ fn effect_styles(
     match mode {
         // 6 — Outline Explosion: thicken, collapse, and recolor vector strokes.
         6 => {
-            for line in lines {
+            for line in lines.iter_mut() {
                 if should_change(seed, intensity) {
                     let width = line.width().get();
                     let factor = if next(seed) % 5 == 0 { 0 } else { 2 + (next(seed) % 7) as i32 };
@@ -624,7 +740,7 @@ fn effect_styles(
         }
         // 7 — Gradient Storm: shove gradient matrices and reorder their color stops.
         7 => {
-            for fill in fills {
+            for fill in fills.iter_mut() {
                 match fill {
                     FillStyle::LinearGradient(gradient)
                     | FillStyle::RadialGradient(gradient)
@@ -640,7 +756,7 @@ fn effect_styles(
                     _ => {}
                 }
             }
-            for line in lines {
+            for line in lines.iter_mut() {
                 let mut fill = line.fill_style().clone();
                 let before = match &mut fill {
                     FillStyle::LinearGradient(gradient)
@@ -656,10 +772,10 @@ fn effect_styles(
         }
         // 8 — Ghost Contours: leave translucent color echoes in vector fills.
         8 => {
-            for fill in fills {
+            for fill in fills.iter_mut() {
                 changed += glitch_color_count(fill, seed, intensity);
             }
-            for line in lines {
+            for line in lines.iter_mut() {
                 let mut fill = line.fill_style().clone();
                 let before = glitch_color_count(&mut fill, seed, intensity);
                 if before > 0 {
@@ -670,6 +786,67 @@ fn effect_styles(
         }
         // 9 — Vector Chaos combines stroke and fill transformations.
         9 => changed += stretch_style_lists(fills, lines, seed, intensity),
+        // 14 — Stroke Pulse: alternate narrow and oversized line widths.
+        14 => {
+            for (index, line) in lines.iter_mut().enumerate() {
+                if should_change(seed, intensity) {
+                    let width = line.width().get();
+                    let pulse = match (index as u32 + next(seed)) % 4 {
+                        0 => 20,
+                        1 => 65,
+                        2 => 180,
+                        _ => 360,
+                    };
+                    let new_width = (i64::from(width) * pulse / 100).clamp(0, 65_535) as i32;
+                    if new_width != width {
+                        *line = line.clone().with_width(Twips::new(new_width));
+                        changed += 1;
+                    }
+                }
+            }
+        }
+        // 15 — Fill Bleed: push fill alpha values toward translucent or opaque extremes.
+        15 => {
+            for fill in fills.iter_mut() {
+                changed += mutate_fill_bleed(fill, seed, intensity);
+            }
+            for line in lines.iter_mut() {
+                let mut fill = line.fill_style().clone();
+                let before = mutate_fill_bleed(&mut fill, seed, intensity);
+                if before > 0 {
+                    *line = line.clone().with_fill_style(fill);
+                    changed += before;
+                }
+            }
+        }
+        // 16 — Gradient Inversion: reverse gradient stops and invert their positions.
+        16 => {
+            for fill in fills.iter_mut() {
+                changed += invert_gradient_fill(fill);
+            }
+            for line in lines.iter_mut() {
+                let mut fill = line.fill_style().clone();
+                let before = invert_gradient_fill(&mut fill);
+                if before > 0 {
+                    *line = line.clone().with_fill_style(fill);
+                    changed += before;
+                }
+            }
+        }
+        // 17 — Bitmap Refraction: shear and rescale bitmap-fill coordinate matrices.
+        17 => {
+            for fill in fills.iter_mut() {
+                changed += refract_bitmap_fill(fill, seed, intensity);
+            }
+            for line in lines.iter_mut() {
+                let mut fill = line.fill_style().clone();
+                let before = refract_bitmap_fill(&mut fill, seed, intensity);
+                if before > 0 {
+                    *line = line.clone().with_fill_style(fill);
+                    changed += before;
+                }
+            }
+        }
         _ => {}
     }
     changed
@@ -729,6 +906,11 @@ fn effect_records(records: &mut [ShapeRecord], seed: &mut u32, intensity: u8, mo
                         point.x = Twips::new(point.x.get().saturating_add(offset(seed, intensity) * 7));
                         point.y = Twips::new(point.y.get().saturating_add(offset(seed, intensity) * 7));
                         changed += 1;
+                    } else if mode == 18 && should_change(seed, intensity) {
+                        let drift = offset(seed, intensity) * (2 + i32::from(intensity) / 12);
+                        point.x = Twips::new(point.x.get().saturating_add(drift));
+                        point.y = Twips::new(point.y.get().saturating_sub(offset(seed, intensity) * (2 + i32::from(intensity) / 12)));
+                        changed += 1;
                     }
                 }
                 if let Some(styles) = &mut change.new_styles {
@@ -753,11 +935,11 @@ fn mutate_vector_effect_shape_mode(shape: &mut swf::Shape, seed: &mut u32, inten
 
 pub(crate) fn mutate_vector_effect_shape(shape: &mut swf::Shape, seed: &mut u32, intensity: u8, mode: u8) -> u32 {
     let mut changed = 0;
-    if mode == 10 {
-        for effect in 0..10 {
+    if mode == 20 {
+        for effect in 0..20 {
             changed += mutate_vector_effect_shape_mode(shape, seed, intensity, effect);
         }
-    } else if mode < 10 {
+    } else if mode < 20 {
         changed += mutate_vector_effect_shape_mode(shape, seed, intensity, mode);
     }
     changed
@@ -788,7 +970,7 @@ pub(crate) fn mutate_vector_effect_morph_shape(shape: &mut swf::MorphShape, seed
 
 
 // Optional live appearance controls shared by Classic Mutation, Vector Stretch,
-// and the ten dedicated vector effects. The base corruption passes remain intact;
+// and the twenty dedicated vector effects. The base corruption passes remain intact;
 // when color corruption is off, only color channels are restored from a snapshot.
 // Cartoon mode then posterizes fills and adds heavier vector outlines.
 
