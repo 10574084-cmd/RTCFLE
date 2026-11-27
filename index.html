@@ -408,35 +408,11 @@
           .sort((a, b) => (b.width * b.height) - (a.width * a.height))[0] || null;
       }
 
-      function paintPreviewRecordingFrame() {
-        if (!previewRecorder || previewRecorder.state !== "recording") return;
-        if (!previewTransitionHold && previewCaptureCanvas && previewCaptureContext) {
-          const source = findPreviewCanvas();
-          if (source) {
-            const width = previewCaptureCanvas.width;
-            const height = previewCaptureCanvas.height;
-            const scale = Math.min(width / source.width, height / source.height);
-            const drawWidth = Math.max(1, Math.round(source.width * scale));
-            const drawHeight = Math.max(1, Math.round(source.height * scale));
-            const x = Math.round((width - drawWidth) / 2);
-            const y = Math.round((height - drawHeight) / 2);
-            try {
-              previewCaptureContext.fillStyle = "#000";
-              previewCaptureContext.fillRect(0, 0, width, height);
-              previewCaptureContext.drawImage(source, x, y, drawWidth, drawHeight);
-            } catch (error) {
-              console.warn("RTCFLE preview recorder could not draw the current frame:", error);
-            }
-          }
-        }
-        previewCaptureFrame = requestAnimationFrame(paintPreviewRecordingFrame);
-      }
-
       function startPreviewRecording() {
         if (previewRecorder) return;
         if (typeof MediaRecorder === "undefined" || !HTMLCanvasElement.prototype.captureStream) {
           $("recordStatus").textContent = "RECORDER: NOT SUPPORTED";
-          $("liveCorruptStatus").textContent = "This browser does not support preview recording with MediaRecorder/canvas capture.";
+          $("liveCorruptStatus").textContent = "This browser does not support direct preview capture with MediaRecorder/canvas capture.";
           return;
         }
         const source = findPreviewCanvas();
@@ -444,23 +420,23 @@
           $("recordStatus").textContent = "RECORDER: LOAD A SWF FIRST";
           return;
         }
-        const scale = Math.min(1, 1920 / source.width, 1080 / source.height);
-        previewCaptureCanvas = document.createElement("canvas");
-        previewCaptureCanvas.width = Math.max(2, Math.round(source.width * scale));
-        previewCaptureCanvas.height = Math.max(2, Math.round(source.height * scale));
-        previewCaptureContext = previewCaptureCanvas.getContext("2d", { alpha: false });
-        if (!previewCaptureContext) {
-          previewCaptureCanvas = null;
-          $("recordStatus").textContent = "RECORDER: CANVAS ERROR";
-          return;
-        }
         try {
-          previewCaptureContext.fillStyle = "#000";
-          previewCaptureContext.fillRect(0, 0, previewCaptureCanvas.width, previewCaptureCanvas.height);
-          previewCaptureContext.drawImage(source, 0, 0, previewCaptureCanvas.width, previewCaptureCanvas.height);
-          previewCaptureStream = previewCaptureCanvas.captureStream(30);
-          const mimeType = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"]
-            .find((type) => MediaRecorder.isTypeSupported(type));
+          // Capture Ruffle's own WebGL/Canvas surface directly. Do not copy it
+          // through a 2D canvas: WebGL drawing buffers may be cleared after
+          // presentation, which causes flicker and black frames on readback.
+          previewCaptureStream = source.captureStream(30);
+          const audioStream = window.__RTCFLE_AUDIO_STREAM;
+          if (audioStream && audioStream.getAudioTracks) {
+            audioStream.getAudioTracks().forEach((track) => {
+              if (track.readyState === "live") previewCaptureStream.addTrack(track.clone());
+            });
+          }
+          const hasAudio = previewCaptureStream.getAudioTracks().length > 0;
+          const mimeType = [
+            "video/webm;codecs=vp9,opus",
+            "video/webm;codecs=vp8,opus",
+            "video/webm"
+          ].find((type) => MediaRecorder.isTypeSupported(type));
           previewRecorder = mimeType
             ? new MediaRecorder(previewCaptureStream, { mimeType })
             : new MediaRecorder(previewCaptureStream);
@@ -489,12 +465,8 @@
               $("recordStatus").textContent = "RECORDER: EMPTY CLIP";
             }
             if (previewCaptureStream) previewCaptureStream.getTracks().forEach((track) => track.stop());
-            if (previewCaptureFrame) cancelAnimationFrame(previewCaptureFrame);
             previewRecorder = null;
-            previewCaptureCanvas = null;
-            previewCaptureContext = null;
             previewCaptureStream = null;
-            previewCaptureFrame = 0;
             previewChunks = [];
             $("recordPreviewButton").textContent = "● Record preview";
             $("recordPreviewButton").classList.remove("recording");
@@ -503,14 +475,13 @@
           previewRecorder.start(1000);
           $("recordPreviewButton").textContent = "■ Stop & save recording";
           $("recordPreviewButton").classList.add("recording");
-          $("recordStatus").textContent = "RECORDER: RECORDING PREVIEW";
-          previewCaptureFrame = requestAnimationFrame(paintPreviewRecordingFrame);
+          $("recordStatus").textContent = hasAudio
+            ? "RECORDER: PREVIEW + SWF AUDIO"
+            : "RECORDER: PREVIEW (AUDIO STREAM NOT READY)";
         } catch (error) {
           console.error("RTCFLE could not start preview recording:", error);
           if (previewCaptureStream) previewCaptureStream.getTracks().forEach((track) => track.stop());
           previewRecorder = null;
-          previewCaptureCanvas = null;
-          previewCaptureContext = null;
           previewCaptureStream = null;
           $("recordStatus").textContent = "RECORDER: START FAILED";
         }
