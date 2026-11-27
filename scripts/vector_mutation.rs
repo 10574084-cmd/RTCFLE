@@ -958,11 +958,11 @@ fn mutate_vector_effect_morph_mode(shape: &mut swf::MorphShape, seed: &mut u32, 
 
 pub(crate) fn mutate_vector_effect_morph_shape(shape: &mut swf::MorphShape, seed: &mut u32, intensity: u8, mode: u8) -> u32 {
     let mut changed = 0;
-    if mode == 10 {
-        for effect in 0..10 {
+    if mode == 20 {
+        for effect in 0..20 {
             changed += mutate_vector_effect_morph_mode(shape, seed, intensity, effect);
         }
-    } else if mode < 10 {
+    } else if mode < 20 {
         changed += mutate_vector_effect_morph_mode(shape, seed, intensity, mode);
     }
     changed
