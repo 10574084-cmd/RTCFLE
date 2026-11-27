@@ -87,6 +87,7 @@
     .btn.primary:hover { background: #8affed; }
     .btn.pink { border-color: rgba(255,78,155,.55); color: #ff8cba; background: rgba(255,78,155,.08); }
     .btn.active { border-color: var(--yellow); color: var(--yellow); background: rgba(216,255,90,.08); }
+    .btn.recording { border-color: #ff5f79; color: #ff8da0; background: rgba(255,95,121,.12); }
     .controls { padding: 15px 16px 17px; }
     .control-group + .control-group { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); }
     .control-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; }
@@ -161,6 +162,7 @@
           <div class="stage-footer">
             <span id="stageInfo">OUTPUT: WAITING FOR INPUT</span>
             <span>VISUAL PIPELINE: <span id="pipelineState">IDLE</span></span>
+            <span id="recordStatus">RECORDER: IDLE</span>
           </div>
         </div>
         <div class="transport">
@@ -170,6 +172,7 @@
           <button class="btn" id="exportButton" disabled>↓ Export corrupted SWF</button>
           <button class="btn" id="liveMutateButton" title="Keyboard shortcut: L" disabled>⌁ Mutate live [L]</button>
           <button class="btn" id="fullscreenButton" type="button">⛶ Fullscreen preview</button>
+          <button class="btn" id="recordPreviewButton" type="button">● Record preview</button>
           <input type="file" id="fileInput" accept=".swf,application/x-shockwave-flash">
         </div>
         <div class="upload-zone" id="dropZone">
@@ -338,8 +341,17 @@
       let currentObjectUrl = null;
       let currentFile = null;
       let currentMutatedBlob = null;
+      let currentPlaybackBlob = null;
       let currentExportName = "corrupted.swf";
       let ruffleReady = false;
+      let previewTransitionHold = false;
+      let previewRecorder = null;
+      let previewChunks = [];
+      let previewCaptureCanvas = null;
+      let previewCaptureContext = null;
+      let previewCaptureStream = null;
+      let previewCaptureFrame = 0;
+      let liveMutationPending = false;
 
       window.RufflePlayer = window.RufflePlayer || {};
       window.RufflePlayer.config = Object.assign({}, window.RufflePlayer.config || {}, {
@@ -374,6 +386,145 @@
         $("stageInfo").textContent = message;
         $("pipelineState").textContent = message.indexOf("ERROR") === 0 ? "ERROR" : (currentFile ? "ACTIVE" : "IDLE");
       }
+
+      function findPreviewCanvas() {
+        const found = new Set();
+        const canvases = [];
+        function scan(root) {
+          if (!root || found.has(root)) return;
+          found.add(root);
+          if (root.querySelectorAll) {
+            root.querySelectorAll("canvas").forEach((canvas) => canvases.push(canvas));
+            root.querySelectorAll("*").forEach((node) => {
+              if (node.shadowRoot) scan(node.shadowRoot);
+            });
+          }
+        }
+        scan(mount);
+        return canvases
+          .filter((canvas) => canvas.width > 0 && canvas.height > 0)
+          .sort((a, b) => (b.width * b.height) - (a.width * a.height))[0] || null;
+      }
+
+      function paintPreviewRecordingFrame() {
+        if (!previewRecorder || previewRecorder.state !== "recording") return;
+        if (!previewTransitionHold && previewCaptureCanvas && previewCaptureContext) {
+          const source = findPreviewCanvas();
+          if (source) {
+            const width = previewCaptureCanvas.width;
+            const height = previewCaptureCanvas.height;
+            const scale = Math.min(width / source.width, height / source.height);
+            const drawWidth = Math.max(1, Math.round(source.width * scale));
+            const drawHeight = Math.max(1, Math.round(source.height * scale));
+            const x = Math.round((width - drawWidth) / 2);
+            const y = Math.round((height - drawHeight) / 2);
+            try {
+              previewCaptureContext.fillStyle = "#000";
+              previewCaptureContext.fillRect(0, 0, width, height);
+              previewCaptureContext.drawImage(source, x, y, drawWidth, drawHeight);
+            } catch (error) {
+              console.warn("RTCFLE preview recorder could not draw the current frame:", error);
+            }
+          }
+        }
+        previewCaptureFrame = requestAnimationFrame(paintPreviewRecordingFrame);
+      }
+
+      function startPreviewRecording() {
+        if (previewRecorder) return;
+        if (typeof MediaRecorder === "undefined" || !HTMLCanvasElement.prototype.captureStream) {
+          $("recordStatus").textContent = "RECORDER: NOT SUPPORTED";
+          $("liveCorruptStatus").textContent = "This browser does not support preview recording with MediaRecorder/canvas capture.";
+          return;
+        }
+        const source = findPreviewCanvas();
+        if (!source) {
+          $("recordStatus").textContent = "RECORDER: LOAD A SWF FIRST";
+          return;
+        }
+        const scale = Math.min(1, 1920 / source.width, 1080 / source.height);
+        previewCaptureCanvas = document.createElement("canvas");
+        previewCaptureCanvas.width = Math.max(2, Math.round(source.width * scale));
+        previewCaptureCanvas.height = Math.max(2, Math.round(source.height * scale));
+        previewCaptureContext = previewCaptureCanvas.getContext("2d", { alpha: false });
+        if (!previewCaptureContext) {
+          previewCaptureCanvas = null;
+          $("recordStatus").textContent = "RECORDER: CANVAS ERROR";
+          return;
+        }
+        try {
+          previewCaptureContext.fillStyle = "#000";
+          previewCaptureContext.fillRect(0, 0, previewCaptureCanvas.width, previewCaptureCanvas.height);
+          previewCaptureContext.drawImage(source, 0, 0, previewCaptureCanvas.width, previewCaptureCanvas.height);
+          previewCaptureStream = previewCaptureCanvas.captureStream(30);
+          const mimeType = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"]
+            .find((type) => MediaRecorder.isTypeSupported(type));
+          previewRecorder = mimeType
+            ? new MediaRecorder(previewCaptureStream, { mimeType })
+            : new MediaRecorder(previewCaptureStream);
+          previewChunks = [];
+          previewRecorder.addEventListener("dataavailable", (event) => {
+            if (event.data && event.data.size) previewChunks.push(event.data);
+          });
+          previewRecorder.addEventListener("error", (event) => {
+            console.error("RTCFLE preview recording failed:", event.error || event);
+            $("recordStatus").textContent = "RECORDER: ERROR";
+          });
+          previewRecorder.addEventListener("stop", () => {
+            const type = previewRecorder && previewRecorder.mimeType ? previewRecorder.mimeType : "video/webm";
+            const blob = new Blob(previewChunks, { type });
+            if (blob.size) {
+              const url = URL.createObjectURL(blob);
+              const anchor = document.createElement("a");
+              anchor.href = url;
+              anchor.download = "RTCFLE-preview-" + new Date().toISOString().replace(/[:.]/g, "-") + ".webm";
+              document.body.appendChild(anchor);
+              anchor.click();
+              anchor.remove();
+              setTimeout(() => URL.revokeObjectURL(url), 60000);
+              $("recordStatus").textContent = "RECORDER: SAVED " + (blob.size / 1024 / 1024).toFixed(1) + " MB";
+            } else {
+              $("recordStatus").textContent = "RECORDER: EMPTY CLIP";
+            }
+            if (previewCaptureStream) previewCaptureStream.getTracks().forEach((track) => track.stop());
+            if (previewCaptureFrame) cancelAnimationFrame(previewCaptureFrame);
+            previewRecorder = null;
+            previewCaptureCanvas = null;
+            previewCaptureContext = null;
+            previewCaptureStream = null;
+            previewCaptureFrame = 0;
+            previewChunks = [];
+            $("recordPreviewButton").textContent = "● Record preview";
+            $("recordPreviewButton").classList.remove("recording");
+            $("recordPreviewButton").disabled = false;
+          });
+          previewRecorder.start(1000);
+          $("recordPreviewButton").textContent = "■ Stop & save recording";
+          $("recordPreviewButton").classList.add("recording");
+          $("recordStatus").textContent = "RECORDER: RECORDING PREVIEW";
+          previewCaptureFrame = requestAnimationFrame(paintPreviewRecordingFrame);
+        } catch (error) {
+          console.error("RTCFLE could not start preview recording:", error);
+          if (previewCaptureStream) previewCaptureStream.getTracks().forEach((track) => track.stop());
+          previewRecorder = null;
+          previewCaptureCanvas = null;
+          previewCaptureContext = null;
+          previewCaptureStream = null;
+          $("recordStatus").textContent = "RECORDER: START FAILED";
+        }
+      }
+
+      function stopPreviewRecording() {
+        if (!previewRecorder || previewRecorder.state === "inactive") return;
+        $("recordPreviewButton").disabled = true;
+        $("recordStatus").textContent = "RECORDER: SAVING...";
+        previewRecorder.stop();
+      }
+
+      $("recordPreviewButton").addEventListener("click", () => {
+        if (previewRecorder) stopPreviewRecording();
+        else startPreviewRecording();
+      });
 
       function bytesJoin(parts) {
         const total = parts.reduce((n, part) => n + part.length, 0);
@@ -1042,12 +1193,12 @@
         return bytesJoin(output);
       }
 
-      async function corruptSwfAssets(file) {
+      async function corruptSwfAssets(file, options = {}) {
         const bitmapStrength = Number($("assetStrength").value) / 100;
         const vectorLevel = Number($("vectorStrength").value);
         const vectorStrength = vectorLevel / 100;
         const mode = $("assetMode").value;
-        const assetsEnabled = $("assetCorrupt").checked;
+        const assetsEnabled = !options.audioOnly && $("assetCorrupt").checked;
         const settings = {
           strength: vectorStrength,
           vectorMode: $("vectorMode").value,
@@ -1111,6 +1262,7 @@
           return;
         }
 
+        previewTransitionHold = true;
         $("fileName").textContent = file.name + "  ·  " + (file.size / 1024 / 1024).toFixed(2) + " MB";
         currentMutatedBlob = null;
         $("exportButton").disabled = true;
@@ -1129,6 +1281,7 @@
               : "Internal asset mutator disabled · original SWF selected.";
           }
           currentMutatedBlob = hasMutations ? playbackBlob : null;
+          currentPlaybackBlob = playbackBlob;
           currentExportName = file.name.replace(/\.swf$/i, "") + ".rtcfle-corrupted.swf";
           $("exportButton").disabled = !currentMutatedBlob;
           await rufflePromise;
@@ -1154,8 +1307,10 @@
           $("stopButton").disabled = false;
           $("liveMutateButton").disabled = false;
           await player.ruffle().load(currentObjectUrl);
+          previewTransitionHold = false;
           setStatus("PLAYING: " + file.name.toUpperCase());
         } catch (error) {
+          previewTransitionHold = false;
           console.error(error);
           setStatus("ERROR: " + (error && error.message ? error.message.toUpperCase() : "SWF LOAD FAILED"));
         }
@@ -1172,6 +1327,8 @@
         currentObjectUrl = null;
         currentFile = null;
         currentMutatedBlob = null;
+        currentPlaybackBlob = null;
+        previewTransitionHold = true;
         $("exportButton").disabled = true;
         $("liveMutateButton").disabled = true;
         emptyState.style.display = "flex";
@@ -1191,7 +1348,7 @@
       });
       $("reloadButton").addEventListener("click", () => { if (currentFile) loadFile(currentFile); });
       $("stopButton").addEventListener("click", unloadFile);
-      function runLiveMutation() {
+      function applyLiveMutation() {
         if (!player || !currentFile) return;
         const mode = $("liveMode").value;
         const isVectorEffect = mode.startsWith("vector-");
@@ -1241,6 +1398,46 @@
           console.error("RTCFLE live mutation failed:", error);
           $("liveCorruptStatus").textContent = "LIVE MUTATION FAILED. Make sure the latest custom Ruffle bundle is loaded.";
           setStatus("LIVE MUTATION ERROR");
+        }
+      }
+
+      async function runLiveMutation() {
+        if (!player || !currentFile || liveMutationPending) return;
+        liveMutationPending = true;
+        $("liveMutateButton").disabled = true;
+        let audioNote = "";
+        try {
+          if ($("audioCorrupt").checked) {
+            const sourceBlob = currentPlaybackBlob || currentFile;
+            const audioResult = await corruptSwfAssets(sourceBlob, { audioOnly: true });
+            if (audioResult.blob !== sourceBlob && audioResult.stats.audioClips > 0) {
+              previewTransitionHold = true;
+              const oldUrl = currentObjectUrl;
+              currentObjectUrl = URL.createObjectURL(audioResult.blob);
+              await player.ruffle().load(currentObjectUrl);
+              if (oldUrl) URL.revokeObjectURL(oldUrl);
+              currentPlaybackBlob = audioResult.blob;
+              currentMutatedBlob = audioResult.blob;
+              $("exportButton").disabled = false;
+              $("assetReport").textContent = "Live audio corruption applied · " +
+                audioResult.stats.audioClips + " audio clips / " + audioResult.stats.audioBytes + " bytes changed. " +
+                "The preview was reloaded to apply the embedded audio edit.";
+              audioNote = "embedded audio corrupted (" + audioResult.stats.audioClips + " clips)";
+            } else {
+              audioNote = "audio option is ON, but no supported embedded audio clips were changed";
+            }
+          }
+          applyLiveMutation();
+          if (audioNote) $("liveCorruptStatus").textContent += " · " + audioNote;
+        } catch (error) {
+          console.error("RTCFLE live audio corruption failed:", error);
+          $("liveCorruptStatus").textContent = "LIVE AUDIO CORRUPTION FAILED: " +
+            (error && error.message ? error.message : "unknown error");
+          applyLiveMutation();
+        } finally {
+          previewTransitionHold = false;
+          liveMutationPending = false;
+          $("liveMutateButton").disabled = !player || !currentFile;
         }
       }
       $("liveMutateButton").addEventListener("click", runLiveMutation);
