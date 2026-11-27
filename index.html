@@ -242,7 +242,7 @@
                 <option value="classic">Classic Mutation</option>
                 <option value="stretch">Vector Stretch</option>
                 <option value="aspect">Sprite Aspect Warp</option>
-                <optgroup label="10 NEW VECTOR MODES">
+                <optgroup label="20 VECTOR CORRUPTION MODES">
                   <option value="vector-0">Shatter Lines</option>
                   <option value="vector-1">Melt Geometry</option>
                   <option value="vector-2">Ripple Distortion</option>
@@ -253,8 +253,18 @@
                   <option value="vector-7">Gradient Storm</option>
                   <option value="vector-8">Ghost Contours</option>
                   <option value="vector-9">Vector Chaos</option>
+                  <option value="vector-10">Angle Snap</option>
+                  <option value="vector-11">Edge Pinch</option>
+                  <option value="vector-12">Axis Shear</option>
+                  <option value="vector-13">Segment Tangle</option>
+                  <option value="vector-14">Stroke Pulse</option>
+                  <option value="vector-15">Fill Bleed</option>
+                  <option value="vector-16">Gradient Inversion</option>
+                  <option value="vector-17">Bitmap Refraction</option>
+                  <option value="vector-18">Contour Drift</option>
+                  <option value="vector-19">Microfracture</option>
                 </optgroup>
-                <option value="vector-all">★ ALL VECTOR EFFECTS</option>
+                <option value="vector-all">★ ALL 20 VECTOR EFFECTS</option>
               </select>
             </div>
 
@@ -343,7 +353,7 @@
 
       const rufflePromise = new Promise((resolve, reject) => {
         const script = document.createElement("script");
-        script.src = "ruffle/ruffle.js?v=live-shortcut-l-deploy-1";
+        script.src = "ruffle/ruffle.js?v=vector-20-modes-1";
         script.async = true;
         script.onload = () => {
           ruffleReady = true;
@@ -1182,7 +1192,7 @@
         if (!player || !currentFile) return;
         const mode = $("liveMode").value;
         const isVectorEffect = mode.startsWith("vector-");
-        const effectMode = mode === "vector-all" ? 10 : (isVectorEffect ? Number(mode.slice(7)) : 0);
+        const effectMode = mode === "vector-all" ? 20 : (isVectorEffect ? Number(mode.slice(7)) : 0);
         const strengthControl = mode === "aspect" ? $("aspectWarpStrength") : $("vectorStrength");
         const intensity = Math.max(1, Math.min(100, Math.ceil(Number(strengthControl.value) / 10)));
         const glitchChance = Number($("aspectGlitchChance").value);
@@ -1216,7 +1226,7 @@
               );
             }
             modeName = mode === "stretch" ? "VECTOR STRETCH" : (isVectorEffect
-              ? (effectMode === 10 ? "ALL VECTOR EFFECTS" : $("liveMode").selectedOptions[0].text.toUpperCase())
+              ? (effectMode === 20 ? "ALL 20 VECTOR EFFECTS" : $("liveMode").selectedOptions[0].text.toUpperCase())
               : "CLASSIC MUTATION");
           }
           const appearanceSummary = mode === "aspect" ? "" :

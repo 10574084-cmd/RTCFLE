@@ -695,7 +695,7 @@ patch("web/packages/core/src/internal/player/inner.tsx",
 
 
 
-// Expose the ten vector corruption algorithms as one dedicated runtime API.
+// Expose the twenty vector corruption algorithms as one dedicated runtime API.
 patch("core/src/display_object/graphic.rs",
     [
         "    pub(crate) fn invalidate_vector_mutation_cache(self) {",
@@ -749,7 +749,7 @@ patch("core/src/display_object/morph_shape.rs",
 patch("core/src/player.rs",
     ["    pub fn mutate_sprite_aspect_warp("],
     [
-        "    /// Applies one of ten dedicated vector effects, or all ten when mode is 10.",
+        "    /// Applies one of twenty dedicated vector effects, or all twenty when mode is 20.",
         "    pub fn mutate_vector_effects(&mut self, mode: u8, intensity: u8, seed: u32) -> u32 {",
         "        self.mutate_with_update_context(|context| {",
         "            let mut characters = Vec::new();",
@@ -801,7 +801,7 @@ patch("web/packages/core/src/public/player/v1.ts",
     ["    mutateSpriteAspectWarp(intensity: number, glitchChance: number, seed: number): number;"],
     [
         "    mutateSpriteAspectWarp(intensity: number, glitchChance: number, seed: number): number;",
-        "    /** Runs one of ten vector effects (0-9), or every vector effect (10). */",
+        "    /** Runs one of twenty vector effects (0-19), or every vector effect (20). */",
         "    mutateVectorEffects(mode: number, intensity: number, seed: number): number;"
     ]);
 
@@ -820,7 +820,7 @@ patch("web/packages/core/src/internal/player/inner.tsx",
     [
         "    mutateVectorEffects(mode: number, intensity: number, seed: number): number {",
         "        if (!this.instance) return 0;",
-        "        const safeMode = Math.max(0, Math.min(10, Math.round(mode)));",
+        "        const safeMode = Math.max(0, Math.min(20, Math.round(mode)));",
         "        const safeIntensity = Math.max(1, Math.min(100, Math.round(intensity)));",
         "        return this.instance.mutate_vector_effects(safeMode, safeIntensity, seed >>> 0);",
         "    }",
@@ -900,7 +900,7 @@ patch("core/src/player.rs",
     ["    pub fn mutate_sprite_aspect_warp("],
     [
         "    /// Runs Classic Mutation, Vector Stretch, or a dedicated vector effect with appearance options.",
-        "    /// kind: 0 = classic, 1 = stretch, 2 = dedicated effect; mode 0-10 is used for kind 2.",
+        "    /// kind: 0 = classic, 1 = stretch, 2 = dedicated effect; modes 0-19 are selectable and 20 runs all.",
         "    pub fn mutate_vector_runtime_with_options(",
         "        &mut self, kind: u8, mode: u8, intensity: u8, seed: u32,",
         "        corrupt_colors: bool, cartoonize: bool, cartoon_strength: u8,",
@@ -980,7 +980,7 @@ patch("web/packages/core/src/internal/player/inner.tsx",
         "    mutateVectorRuntimeWithOptions(kind: number, mode: number, intensity: number, seed: number, corruptColors: boolean, cartoonize: boolean, cartoonStrength: number): number {",
         "        if (!this.instance) return 0;",
         "        const safeKind = Math.max(0, Math.min(2, Math.round(kind)));",
-        "        const safeMode = Math.max(0, Math.min(10, Math.round(mode)));",
+        "        const safeMode = Math.max(0, Math.min(20, Math.round(mode)));",
         "        const safeIntensity = Math.max(1, Math.min(100, Math.round(intensity)));",
         "        const safeCartoonStrength = Math.max(1, Math.min(100, Math.round(cartoonStrength)));",
         "        return this.instance.mutate_vector_runtime_with_options(safeKind, safeMode, safeIntensity, seed >>> 0, Boolean(corruptColors), Boolean(cartoonize), safeCartoonStrength);",
@@ -990,5 +990,5 @@ patch("web/packages/core/src/internal/player/inner.tsx",
     ]);
 
 
-console.log("Patched pinned Ruffle source for classic mutation, Vector Stretch, Sprite Aspect Warp, ten vector effects, and live appearance controls.");
+console.log("Patched pinned Ruffle source for classic mutation, Vector Stretch, Sprite Aspect Warp, twenty vector effects, and live appearance controls.");
 
