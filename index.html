@@ -352,7 +352,7 @@
                 <div><label class="range-label" for="textStrength">Text corruption strength</label><input type="range" id="textStrength" min="1" max="100" value="55"></div>
                 <span class="range-value" id="textStrengthValue">55%</span>
               </div>
-              <button class="btn" id="corruptTextButton" style="width:100%">✦ CORRUPT TEXT NOW</button>
+              <button class="btn" id="corruptTextButton" title="Keyboard shortcut: O" style="width:100%">✦ CORRUPT TEXT NOW [O]</button>
               <p id="textCorruptStatus" class="tiny" style="margin:9px 0 0;line-height:1.5">Text corruption targets editable text and static glyph runs in the live movie. Changes apply without reloading the SWF.</p>
             </div>
             <p id="liveCorruptStatus" class="tiny" style="margin:13px 0 0;line-height:1.6">LIVE MUTATION: choose a runtime mode. Changes apply to the current movie without reloading it.</p>
@@ -1562,11 +1562,18 @@
         });
       }
       window.addEventListener("keydown", (event) => {
-        if ((event.code !== "KeyL" && (typeof event.key !== "string" || event.key.toLowerCase() !== "l")) ||
-            event.repeat || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
+        const key = event.code === "KeyL" ? "l" :
+          event.code === "KeyO" ? "o" :
+          (typeof event.key === "string" ? event.key.toLowerCase() : "");
+        if ((key !== "l" && key !== "o") ||
+            event.repeat || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.isComposing) return;
         if (isTypingInTextControl(event) || !player || !currentFile) return;
         event.preventDefault();
-        runLiveMutation();
+        if (key === "o") {
+          $("corruptTextButton").click();
+        } else {
+          runLiveMutation();
+        }
       }, true);
 
       $("fullscreenButton").addEventListener("click", async () => {
