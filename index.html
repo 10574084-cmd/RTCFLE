@@ -193,6 +193,7 @@
             <label class="toggle">Corrupt internal assets <input type="checkbox" id="assetCorrupt" checked></label>
             <label class="toggle" style="margin-top:9px">Disable auto-corrupt on startup <input type="checkbox" id="disableAutoCorrupt"></label>
             <label class="toggle" style="margin-top:9px">Corrupt embedded audio (including Live) <input type="checkbox" id="audioCorrupt"></label>
+            <button class="btn" id="liveAudioButton" title="Keyboard shortcut: J" style="width:100%;margin-top:9px">♫ TOGGLE LIVE AUDIO [J] · OFF</button>
             <label class="toggle" style="margin-top:9px">Auto-record preview when corrupting <input type="checkbox" id="autoRecordCorruption"></label>
             <p class="tiny" style="margin:8px 0 0;line-height:1.5">Starts recording the preview when a corruption is applied. Recording keeps running through reloads and game changes; the transition is held out of the capture.</p>
             <div id="audioSettings" class="hidden" style="margin-top:11px;padding:11px;border:1px solid #29394b;border-radius:9px;background:rgba(255,255,255,.02)">
@@ -241,6 +242,8 @@
                 <option value="noise">Color noise</option>
                 <option value="posterize">Color posterization</option>
               </select>
+              <button class="btn" id="corruptBitmapsButton" title="Keyboard shortcut: I" style="width:100%;margin-top:9px">▧ CORRUPT BITMAP IMAGES NOW [I]</button>
+              <p class="tiny" style="margin:7px 0 0;line-height:1.5">Bitmap-only operation: edits embedded raster images in a temporary SWF copy and reloads the movie. Vector shapes are left unchanged.</p>
             </div>
             <div style="margin-top:15px">
               <label class="range-label" for="liveMode">Live runtime corruption mode</label>
@@ -1262,15 +1265,17 @@
         const vectorLevel = Number($("vectorStrength").value);
         const vectorStrength = vectorLevel / 100;
         const mode = $("assetMode").value;
-        const assetsEnabled = !options.audioOnly && $("assetCorrupt").checked;
+        const bitmapOnly = options.bitmapOnly === true;
+        const audioOnly = options.audioOnly === true;
+        const assetsEnabled = !audioOnly && (bitmapOnly || $("assetCorrupt").checked);
         const settings = {
           strength: vectorStrength,
           vectorMode: $("vectorMode").value,
           bitmapStrength,
           style: $("assetStyle").value,
-          vectors: assetsEnabled && (mode === "both" || mode === "vectors"),
-          bitmaps: assetsEnabled && (mode === "both" || mode === "bitmaps"),
-          audio: $("audioCorrupt").checked,
+          vectors: !bitmapOnly && assetsEnabled && (mode === "both" || mode === "vectors"),
+          bitmaps: bitmapOnly || (assetsEnabled && (mode === "both" || mode === "bitmaps")),
+          audio: !bitmapOnly && (audioOnly || $("audioCorrupt").checked),
           audioStrength: Number($("audioStrength").value) / 100,
           audioStyle: $("audioStyle").value
         };
@@ -1315,7 +1320,7 @@
         }
       }
 
-      async function loadFile(file) {
+      async function loadFile(file, options = {}) {
         if (!file) return;
         if (!file.name.toLowerCase().endsWith(".swf")) {
           setStatus("ERROR: PLEASE SELECT A .SWF FILE");
@@ -1340,7 +1345,11 @@
         try {
           let playbackBlob = file;
           let hasMutations = false;
-          if (!$("disableAutoCorrupt").checked && ($("assetCorrupt").checked || $("audioCorrupt").checked)) {
+          if (options.preMutatedBlob) {
+            playbackBlob = options.preMutatedBlob;
+            hasMutations = playbackBlob !== file;
+            $("assetReport").textContent = options.mutationNote || "A temporary SWF copy with selected assets modified is being played.";
+          } else if (!$("disableAutoCorrupt").checked && ($("assetCorrupt").checked || $("audioCorrupt").checked)) {
             const result = await corruptSwfAssets(file);
             playbackBlob = result.blob;
             hasMutations = playbackBlob !== file;
@@ -1389,6 +1398,74 @@
           setStatus("ERROR: " + (error && error.message ? error.message.toUpperCase() : "SWF LOAD FAILED"));
         }
       }
+
+      let bitmapCorruptionPending = false;
+      async function runBitmapCorruption() {
+        if (!player || !currentFile || bitmapCorruptionPending) return;
+        bitmapCorruptionPending = true;
+        const originalFile = currentFile;
+        $("corruptBitmapsButton").disabled = true;
+        setStatus("CORRUPTING EMBEDDED BITMAP IMAGES...");
+        try {
+          if ($("autoRecordCorruption").checked && !previewRecorder) startPreviewRecording();
+          const result = await corruptSwfAssets(originalFile, { bitmapOnly: true });
+          if (result.blob === originalFile || result.stats.bitmapImages === 0) {
+            $("assetReport").textContent = "BITMAP CORRUPTION: no supported embedded raster images were changed. The current movie was left untouched.";
+            setStatus("BITMAP CORRUPTION: NO SUPPORTED IMAGES");
+            return;
+          }
+          const note = "BITMAP-ONLY CORRUPTION · " + result.stats.bitmapImages +
+            " raster image assets changed. Vector shapes and embedded audio were not modified. The movie restarted from frame 1.";
+          await loadFile(originalFile, { preMutatedBlob: result.blob, mutationNote: note });
+        } catch (error) {
+          console.error("RTCFLE bitmap corruption failed:", error);
+          $("assetReport").textContent = "BITMAP CORRUPTION FAILED: " +
+            (error && error.message ? error.message : "unknown error");
+          setStatus("BITMAP CORRUPTION ERROR");
+        } finally {
+          bitmapCorruptionPending = false;
+          $("corruptBitmapsButton").disabled = !player || !currentFile;
+        }
+      }
+      $("corruptBitmapsButton").addEventListener("click", runBitmapCorruption);
+
+      function updateLiveAudioButton() {
+        const enabled = !!(window.__RTCFLE_AUDIO_LIVE && window.__RTCFLE_AUDIO_LIVE.enabled);
+        $("liveAudioButton").textContent = enabled
+          ? "♫ LIVE AUDIO CORRUPTION [J] · ON"
+          : "♫ TOGGLE LIVE AUDIO [J] · OFF";
+        $("liveAudioButton").classList.toggle("active", enabled);
+      }
+
+      function toggleLiveAudioCorruption() {
+        if (!player || !currentFile) return;
+        const enabled = !(window.__RTCFLE_AUDIO_LIVE && window.__RTCFLE_AUDIO_LIVE.enabled);
+        $("audioCorrupt").checked = enabled;
+        $("audioSettings").classList.toggle("hidden", !enabled);
+        if (enabled) {
+          if ($("autoRecordCorruption").checked && !previewRecorder) startPreviewRecording();
+          const seed = new Uint32Array(1);
+          if (window.crypto && window.crypto.getRandomValues) window.crypto.getRandomValues(seed);
+          else seed[0] = Math.floor(Math.random() * 0xFFFFFFFF);
+          window.__RTCFLE_AUDIO_LIVE = {
+            enabled: true,
+            strength: Number($("audioStrength").value) / 100,
+            style: $("audioStyle").value,
+            seed: seed[0]
+          };
+          $("assetReport").textContent = "LIVE AUDIO CORRUPTION ON · " +
+            Math.round(Number($("audioStrength").value)) + "% · " + $("audioStyle").selectedOptions[0].text +
+            ". Processing the current Ruffle audio output without reloading the SWF.";
+          setStatus("LIVE AUDIO CORRUPTION: ON");
+        } else {
+          window.__RTCFLE_AUDIO_LIVE = { enabled: false };
+          $("assetReport").textContent = "LIVE AUDIO CORRUPTION OFF · Current Ruffle audio output is passing through unchanged.";
+          setStatus("LIVE AUDIO CORRUPTION: OFF");
+        }
+        updateLiveAudioButton();
+      }
+      $("liveAudioButton").addEventListener("click", toggleLiveAudioCorruption);
+      updateLiveAudioButton();
 
       function unloadFile() {
         if (player) {
@@ -1501,6 +1578,7 @@
           } else {
             window.__RTCFLE_AUDIO_LIVE = { enabled: false };
           }
+          updateLiveAudioButton();
           applyLiveMutation(false);
           if (audioNote) $("liveCorruptStatus").textContent += " · " + audioNote;
         } catch (error) {
@@ -1554,26 +1632,24 @@
         const path = typeof event.composedPath === "function" ? event.composedPath() : [event.target];
         return path.some((node) => {
           if (!(node instanceof Element)) return false;
-          if (node.isContentEditable || node.matches("textarea, select, [role='textbox']")) return true;
-          if (node instanceof HTMLInputElement) {
-            return /^(text|search|email|url|password|number|tel)$/i.test(node.type);
-          }
+          if (node.isContentEditable || node.matches("input, textarea, select, [role='textbox']")) return true;
           return false;
         });
       }
       window.addEventListener("keydown", (event) => {
         const key = event.code === "KeyL" ? "l" :
           event.code === "KeyO" ? "o" :
+          event.code === "KeyI" ? "i" :
+          event.code === "KeyJ" ? "j" :
           (typeof event.key === "string" ? event.key.toLowerCase() : "");
-        if ((key !== "l" && key !== "o") ||
+        if (!["l", "o", "i", "j"].includes(key) ||
             event.repeat || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.isComposing) return;
         if (isTypingInTextControl(event) || !player || !currentFile) return;
         event.preventDefault();
-        if (key === "o") {
-          $("corruptTextButton").click();
-        } else {
-          runLiveMutation();
-        }
+        if (key === "o") $("corruptTextButton").click();
+        else if (key === "i") $("corruptBitmapsButton").click();
+        else if (key === "j") $("liveAudioButton").click();
+        else runLiveMutation();
       }, true);
 
       $("fullscreenButton").addEventListener("click", async () => {
