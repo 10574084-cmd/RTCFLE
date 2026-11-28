@@ -193,14 +193,14 @@
             <label class="toggle">Corrupt internal assets <input type="checkbox" id="assetCorrupt" checked></label>
             <label class="toggle" style="margin-top:9px">Disable auto-corrupt on startup <input type="checkbox" id="disableAutoCorrupt"></label>
             <label class="toggle" style="margin-top:9px">Corrupt embedded audio (including Live) <input type="checkbox" id="audioCorrupt"></label>
-            <label class="toggle" style="margin-top:9px">Activar corrupción REAL de bytes SWF <input type="checkbox" id="rawByteCorruption"></label>
+            <label class="toggle" style="margin-top:9px">Enable REAL SWF byte corruption <input type="checkbox" id="rawByteCorruption"></label>
             <div id="rawByteCorruptionPanel" class="hidden" style="margin-top:10px;padding:11px;border:1px solid rgba(255,95,121,.45);border-radius:9px;background:rgba(255,95,121,.055)">
-              <p class="tiny" style="margin:0 0 10px;line-height:1.55;color:#ffcf9c">Modo experimental: modifica bytes internos en una copia temporal del SWF. Esa copia podría presentar errores de reproducción; el archivo original no se modifica.</p>
+              <p class="tiny" style="margin:0 0 10px;line-height:1.55;color:#ffcf9c">EXPERIMENTAL: changes actual bytes inside SWF tag data. The movie may become unreadable or Ruffle may stop loading it. RTCFLE never overwrites the original file.</p>
               <div class="range-row" style="margin-top:0">
                 <div><label class="range-label" for="rawByteStrength">Raw byte corruption intensity</label><input type="range" id="rawByteStrength" min="1" max="100" value="5"></div>
                 <span class="range-value" id="rawByteStrengthValue">5%</span>
               </div>
-              <button class="btn pink" id="rawByteCorruptButton" title="Experimental: modifies a temporary SWF copy" style="width:100%" disabled>⚠ CORROMPER SWF</button>
+              <button class="btn pink" id="rawByteCorruptButton" title="Experimental: modifies a temporary SWF copy" style="width:100%" disabled>⚠ CORRUPT REAL SWF BYTES</button>
             </div>
             <button class="btn" id="liveAudioButton" title="Keyboard shortcut: J" style="width:100%;margin-top:9px">♫ TOGGLE LIVE AUDIO [J] · OFF</button>
             <label class="toggle" style="margin-top:9px">Auto-record preview when corrupting <input type="checkbox" id="autoRecordCorruption"></label>
