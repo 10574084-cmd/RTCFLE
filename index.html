@@ -193,6 +193,15 @@
             <label class="toggle">Corrupt internal assets <input type="checkbox" id="assetCorrupt" checked></label>
             <label class="toggle" style="margin-top:9px">Disable auto-corrupt on startup <input type="checkbox" id="disableAutoCorrupt"></label>
             <label class="toggle" style="margin-top:9px">Corrupt embedded audio (including Live) <input type="checkbox" id="audioCorrupt"></label>
+            <label class="toggle" style="margin-top:9px">Enable REAL SWF byte corruption <input type="checkbox" id="rawByteCorruption"></label>
+            <div id="rawByteCorruptionPanel" class="hidden" style="margin-top:10px;padding:11px;border:1px solid rgba(255,95,121,.45);border-radius:9px;background:rgba(255,95,121,.055)">
+              <p class="tiny" style="margin:0 0 10px;line-height:1.55;color:#ff9caf">EXPERIMENTAL: changes actual bytes inside SWF tag data. The movie may become unreadable or Ruffle may stop loading it. RTCFLE never overwrites the original file.</p>
+              <div class="range-row" style="margin-top:0">
+                <div><label class="range-label" for="rawByteStrength">Raw byte corruption intensity</label><input type="range" id="rawByteStrength" min="1" max="100" value="5"></div>
+                <span class="range-value" id="rawByteStrengthValue">5%</span>
+              </div>
+              <button class="btn pink" id="rawByteCorruptButton" title="Experimental: modifies a temporary SWF copy" style="width:100%" disabled>⚠ CORRUPT REAL SWF BYTES</button>
+            </div>
             <button class="btn" id="liveAudioButton" title="Keyboard shortcut: J" style="width:100%;margin-top:9px">♫ TOGGLE LIVE AUDIO [J] · OFF</button>
             <label class="toggle" style="margin-top:9px">Auto-record preview when corrupting <input type="checkbox" id="autoRecordCorruption"></label>
             <p class="tiny" style="margin:8px 0 0;line-height:1.5">Starts recording the preview when a corruption is applied. Recording keeps running through reloads and game changes; the transition is held out of the capture.</p>
@@ -1260,6 +1269,88 @@
         return bytesJoin(output);
       }
 
+      function collectRawSwfPayloadRanges(data, start, end, depth, ranges, state) {
+        if (depth > 16) throw new Error("SWF sprite nesting limit reached during raw byte scan.");
+        let position = start;
+        let processed = 0;
+        while (position + 2 <= end && processed < 1000000) {
+          const header = data[position] | (data[position + 1] << 8);
+          position += 2;
+          const code = header >>> 6;
+          let length = header & 63;
+          if (length === 63) {
+            if (position + 4 > end) throw new Error("Truncated SWF tag length during raw byte scan.");
+            length = new DataView(data.buffer, data.byteOffset + position, 4).getUint32(0, true);
+            position += 4;
+          }
+          if (length > end - position) throw new Error("SWF tag extends past file end during raw byte scan.");
+          const payloadStart = position;
+          const payloadEnd = position + length;
+          if (code === 39 && length >= 4) {
+            collectRawSwfPayloadRanges(data, payloadStart + 4, payloadEnd, depth + 1, ranges, state);
+          } else if (code !== 0 && code !== 1 && length > 0) {
+            ranges.push({ start: payloadStart, end: payloadEnd });
+            state.eligibleBytes += length;
+          }
+          position = payloadEnd;
+          processed++;
+          if (code === 0) break;
+        }
+        if (processed >= 1000000) throw new Error("SWF tag limit reached during raw byte scan.");
+      }
+
+      async function createRawByteCorruption(file) {
+        const source = new Uint8Array(await file.arrayBuffer());
+        if (source.length < 12) throw new Error("File too small for a valid SWF header.");
+        const signature = String.fromCharCode(source[0], source[1], source[2]);
+        if (signature === "ZWS") throw new Error("ZWS/LZMA SWF is not supported by raw byte mode yet.");
+        if (signature !== "FWS" && signature !== "CWS") throw new Error("Not a recognized FWS/CWS file.");
+        const version = source[3];
+        let body = signature === "CWS"
+          ? await zlibTransform(source.slice(8), "inflate", 180 * 1024 * 1024)
+          : source.slice(8);
+        const headerBits = new SwfBits(body, 0);
+        headerBits.skipRect();
+        headerBits.readU16();
+        headerBits.readU16();
+        const tagStart = headerBits.bit >> 3;
+        if (tagStart < 5 || tagStart >= body.length) throw new Error("Invalid SWF movie header.");
+        const ranges = [];
+        const state = { eligibleBytes: 0 };
+        collectRawSwfPayloadRanges(body, tagStart, body.length, 0, ranges, state);
+        if (!ranges.length || !state.eligibleBytes) throw new Error("No eligible SWF tag payload bytes were found.");
+        const intensity = Math.max(1, Math.min(100, Number($("rawByteStrength").value) || 1));
+        const flipCount = Math.max(1, Math.min(512,
+          Math.round(state.eligibleBytes * (intensity / 100) * 0.00005)));
+        const changedPositions = new Set();
+        const maxAttempts = Math.max(100, flipCount * 20);
+        for (let attempt = 0; attempt < maxAttempts && changedPositions.size < flipCount; attempt++) {
+          let pick = Math.floor(Math.random() * state.eligibleBytes);
+          let offset = -1;
+          for (const range of ranges) {
+            const size = range.end - range.start;
+            if (pick < size) {
+              offset = range.start + pick;
+              break;
+            }
+            pick -= size;
+          }
+          if (offset < 0 || changedPositions.has(offset)) continue;
+          changedPositions.add(offset);
+          body[offset] ^= 1 << Math.floor(Math.random() * 8);
+        }
+        if (!changedPositions.size) throw new Error("No raw byte changes could be applied.");
+        const output = new Uint8Array(8 + body.length);
+        output.set([70, 87, 83, version], 0);
+        new DataView(output.buffer).setUint32(4, output.length, true);
+        output.set(body, 8);
+        return {
+          blob: new Blob([output], { type: "application/x-shockwave-flash" }),
+          flips: changedPositions.size,
+          eligibleBytes: state.eligibleBytes
+        };
+      }
+
       async function corruptSwfAssets(file, options = {}) {
         const bitmapStrength = Number($("assetStrength").value) / 100;
         const vectorLevel = Number($("vectorStrength").value);
@@ -1385,6 +1476,7 @@
           $("reloadButton").disabled = false;
           $("stopButton").disabled = false;
           $("liveMutateButton").disabled = false;
+          $("rawByteCorruptButton").disabled = false;
           await player.ruffle().load(currentObjectUrl);
           if (previewRecorder) attachPreviewCaptureSource();
           previewTransitionHold = false;
@@ -1398,6 +1490,38 @@
           setStatus("ERROR: " + (error && error.message ? error.message.toUpperCase() : "SWF LOAD FAILED"));
         }
       }
+
+      let rawByteCorruptionPending = false;
+      async function runRawByteCorruption() {
+        if (!player || !currentFile || rawByteCorruptionPending) return;
+        rawByteCorruptionPending = true;
+        const originalFile = currentFile;
+        $("rawByteCorruptButton").disabled = true;
+        setStatus("MUTATING REAL SWF BYTES...");
+        try {
+          if ($("autoRecordCorruption").checked && !previewRecorder) startPreviewRecording();
+          const result = await createRawByteCorruption(originalFile);
+          const note = "REAL SWF BYTE CORRUPTION · " + result.flips +
+            " actual payload bytes bit-flipped across " + result.eligibleBytes +
+            " eligible bytes. Movie restarts from frame 1. Original source remains untouched.";
+          await loadFile(originalFile, { preMutatedBlob: result.blob, mutationNote: note });
+        } catch (error) {
+          console.error("RTCFLE raw byte corruption failed:", error);
+          $("assetReport").textContent = "RAW BYTE CORRUPTION FAILED: " +
+            (error && error.message ? error.message : "unknown error");
+          setStatus("RAW BYTE CORRUPTION ERROR");
+        } finally {
+          rawByteCorruptionPending = false;
+          $("rawByteCorruptButton").disabled = !player || !currentFile;
+        }
+      }
+      $("rawByteCorruptButton").addEventListener("click", runRawByteCorruption);
+      $("rawByteCorruption").addEventListener("change", () => {
+        $("rawByteCorruptionPanel").classList.toggle("hidden", !$("rawByteCorruption").checked);
+      });
+      $("rawByteStrength").addEventListener("input", () => {
+        $("rawByteStrengthValue").textContent = $("rawByteStrength").value + "%";
+      });
 
       let bitmapCorruptionPending = false;
       async function runBitmapCorruption() {
@@ -1482,6 +1606,7 @@
         previewTransitionHold = true;
         $("exportButton").disabled = true;
         $("liveMutateButton").disabled = true;
+        $("rawByteCorruptButton").disabled = true;
         emptyState.style.display = "flex";
         $("fileState").textContent = "NO SWF LOADED";
         $("fileName").textContent = "No file selected";
